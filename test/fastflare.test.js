@@ -232,6 +232,29 @@ test('CAPTCHA: borderline traffic gets a harder second challenge', async () => {
   });
 });
 
+test('CAPTCHA: one network cannot mint unlimited tokens', async () => {
+  await withApp(async (base) => {
+    const core = loadWidgetCore();
+    const solve = (c) => String(core.solve(`${c.id}.${c.salt}.`, c.difficulty, 0, 1e8));
+    async function attempt() {
+      const r = await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' });
+      if (r.status === 429) return 'blocked';
+      let { challenge } = await r.json();
+      let v = await (await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce: solve(challenge), signals: HUMAN })).json();
+      let stepped = false;
+      if (v.retry) {
+        stepped = true;
+        challenge = v.challenge;
+        v = await (await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce: solve(challenge), signals: HUMAN })).json();
+      }
+      return v.ok ? (stepped ? 'stepped' : 'passed') : 'failed';
+    }
+    const results = [];
+    for (let i = 0; i < 12; i++) results.push(await attempt());
+    assert.deepEqual(results, [...Array(4).fill('passed'), ...Array(4).fill('stepped'), ...Array(4).fill('blocked')]);
+  });
+});
+
 test('Speed test: registry, ping, download size and upload accounting', async () => {
   await withApp(async (base) => {
     const list = await (await fetch(base + '/speed/servers')).json();

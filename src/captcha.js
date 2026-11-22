@@ -61,18 +61,36 @@ export function scoreSignals(raw, ua = '') {
   return { score: Math.round(score * 100) / 100, reasons };
 }
 
-export function createCaptcha({ secret, sites, trustProxy = false, baseBits = 16, now = Date.now }) {
+const QUOTA_WINDOW_MS = 10 * 60_000;
+
+// Per-network token quota key: full IPv4 address, or the /64 for IPv6.
+const netKey = (ip) => (ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip);
+
+export function createCaptcha({ secret, sites, trustProxy = false, baseBits = 16, quotaSoft = 4, quotaHard = 8, now = Date.now }) {
   const hmac = (s) => crypto.createHmac('sha256', secret).update(s).digest('base64url');
   const ipTag = (ip) => crypto.createHash('sha256').update(secret + coarseIp(ip)).digest('hex').slice(0, 16);
 
   const usedChallenges = new Map(); // id -> expiry
   const usedTokens = new Map();
   const rate = new Map(); // ipTag -> {n, reset}
+  const passLog = new Map(); // netKey -> timestamps of recently issued tokens
+
+  function recentPasses(key) {
+    const t = now();
+    const list = (passLog.get(key) || []).filter((x) => t - x < QUOTA_WINDOW_MS);
+    passLog.set(key, list);
+    return list.length;
+  }
+  function recordPass(key) {
+    recentPasses(key);
+    passLog.get(key).push(now());
+  }
 
   const sweep = setInterval(() => {
     const t = now();
     for (const m of [usedChallenges, usedTokens]) for (const [k, exp] of m) if (exp < t) m.delete(k);
     for (const [k, v] of rate) if (v.reset < t) rate.delete(k);
+    for (const k of passLog.keys()) if (recentPasses(k) === 0) passLog.delete(k);
   }, 30_000);
   sweep.unref();
 
@@ -117,6 +135,7 @@ export function createCaptcha({ secret, sites, trustProxy = false, baseBits = 16
     const site = siteFor(sitekey);
     if (!site) throw httpError(400, 'invalid_sitekey');
     checkOrigin(site, origin);
+    if (recentPasses(netKey(ip)) >= quotaHard) throw httpError(429, 'too_many_tokens');
     const tag = ipTag(ip);
     return { challenge: makeChallenge({ sitekey, tag, bits: difficultyFor(tag), attempt: 0 }) };
   }
@@ -127,6 +146,8 @@ export function createCaptcha({ secret, sites, trustProxy = false, baseBits = 16
     checkOrigin(site, origin);
     if (!c || typeof c !== 'object') throw httpError(400, 'missing_challenge');
     const tag = ipTag(ip);
+    const net = netKey(ip);
+    if (recentPasses(net) >= quotaHard) throw httpError(429, 'too_many_tokens');
 
     const expected = hmac(`c|${c.id}|${c.salt}|${c.difficulty}|${c.exp}|${sitekey}|${tag}|${c.attempt}`);
     if (!safeEqual(expected, c.sig)) throw httpError(400, 'bad_challenge');
@@ -155,6 +176,14 @@ export function createCaptcha({ secret, sites, trustProxy = false, baseBits = 16
     const needed = c.attempt >= 1 ? STEPUP_PASS_SCORE : PASS_SCORE;
 
     if (score >= needed) {
+      // Many tokens from one network in a short time is not how people behave: make each one
+      // progressively more expensive, and stop issuing them at the hard limit.
+      const recent = recentPasses(net);
+      if (c.attempt === 0 && recent >= quotaSoft) {
+        const bits = Math.min(MAX_BITS, c.difficulty + STEPUP_BITS + (recent - quotaSoft));
+        return { ok: false, retry: true, challenge: makeChallenge({ sitekey, tag, bits, attempt: 1 }) };
+      }
+      recordPass(net);
       const t = now();
       const payload = Buffer.from(JSON.stringify({ k: sitekey, i: c.id, t, e: t + TOKEN_TTL, s: score, h: tag })).toString('base64url');
       return { ok: true, token: `${payload}.${hmac('t|' + payload)}`, expires: t + TOKEN_TTL, score };

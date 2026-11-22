@@ -75,6 +75,8 @@ export function loadConfig(overrides = {}) {
     secret,
     sites,
     captchaBaseBits: int(env.FF_CAPTCHA_BITS, 16),
+    quotaSoft: int(env.FF_QUOTA_SOFT, 4),
+    quotaHard: int(env.FF_QUOTA_HARD, 8),
     node,
     servers,
     speed: { maxBytes: int(env.FF_MAX_BYTES, 100 * 1024 * 1024) },

@@ -106,6 +106,9 @@ if (empty($out['success'])) { http_response_code(400); exit; }</code></pre>
 { "success": false, "error-codes": ["timeout-or-duplicate"] }</code></pre>
   <p>Error codes: <code>invalid-input-secret</code>, <code>invalid-input-response</code>, <code>timeout-or-duplicate</code>, <code>remoteip-mismatch</code>. <code>score</code> is 0 to 1 (higher is more human-looking). Use it to decide whether to add your own extra checks on risky actions.</p>
 
+  <h3>Limits per network</h3>
+  <p>People rarely pass a CAPTCHA many times in a few minutes, so FastFlare also limits tokens per network address over a rolling 10 minutes. After the first <code>FF_QUOTA_SOFT</code> (default 4), each new token needs a progressively harder proof-of-work. At <code>FF_QUOTA_HARD</code> (default 8) it stops issuing tokens to that address and returns <code>429 too_many_tokens</code> until the window passes. Sites whose visitors share an address (mobile carriers, offices, campuses) should raise both numbers.</p>
+
   <h2>Live demo</h2>
   <p>Uses the demo key against a FastFlare server you enter (the page below on GitHub Pages is static, so it needs a running server).</p>
   <div class="card">

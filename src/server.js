@@ -29,6 +29,8 @@ export async function createApp(overrides = {}) {
     sites: config.sites,
     trustProxy: config.trustProxy,
     baseBits: config.captchaBaseBits,
+    quotaSoft: config.quotaSoft,
+    quotaHard: config.quotaHard,
   });
   const speed = createSpeedtest({
     node: config.node,

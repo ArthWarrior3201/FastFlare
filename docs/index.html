@@ -64,6 +64,7 @@ FF_SECRET=$(openssl rand -hex 32) node src/server.js</code></pre>
     <tr><td><code>config/servers.json</code></td><td>Other speed test servers to list.</td></tr>
     <tr><td><code>NTP_PORT</code>, <code>FF_NTP=0</code></td><td>Time server UDP port (default 123), or turn it off.</td></tr>
     <tr><td><code>FF_TIME_PROVIDERS</code></td><td>Upstream time sources. See the <a href="envtime.html">EnvTime guide</a>.</td></tr>
+    <tr><td><code>FF_CAPTCHA_BITS</code>, <code>FF_QUOTA_SOFT</code>, <code>FF_QUOTA_HARD</code></td><td>CAPTCHA base difficulty (default 16 bits), and how many tokens one network may get in 10 minutes before they get harder (4) and stop (8).</td></tr>
     <tr><td><code>TRUST_PROXY=1</code></td><td>Read the visitor IP from proxy headers when running behind one.</td></tr>
   </table>
 </main>
