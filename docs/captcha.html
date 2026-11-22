@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FastFlare CAPTCHA integration</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">Fast<span>Flare</span></a>
+  <nav>
+    <a href="captcha.html" aria-current="page">CAPTCHA</a>
+    <a href="speedtest.html">Speed Test</a>
+    <a href="envtime.html">EnvTime</a>
+    <a href="speedtest-app.html">Live speed test</a>
+    <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
+  </nav>
+</header>
+<main>
+  <h1>Bot protection, <em>no picture puzzles</em></h1>
+  <p class="lead">Add a widget to your form, verify one token on your server. Visitors see a one-line "Verified" badge, not a grid of crosswalks.</p>
+
+  <h2>How it works</h2>
+  <ol>
+    <li>The widget asks your FastFlare server for a signed challenge.</li>
+    <li>The browser solves a small SHA-256 proof-of-work in Web Workers (a fraction of a second normally). Real people don't notice; running it thousands of times costs a bot farm real CPU.</li>
+    <li>It also reports behaviour signals (pointer and keyboard activity, <code>navigator.webdriver</code>, and so on). Clean traffic passes. Odd traffic gets a harder proof-of-work. Obvious automation is rejected.</li>
+    <li>The server returns a short-lived, single-use token. Your backend exchanges it at <code>/captcha/siteverify</code>.</li>
+  </ol>
+  <p>Difficulty rises automatically for any network that requests many challenges per minute.</p>
+  <div class="note"><strong>Be realistic about what this is.</strong> No CAPTCHA stops a determined attacker who is willing to pay. Proof-of-work and signals raise the cost of abuse and stop lazy scripts, scrapers and credential-stuffing at low effort, but the signals come from the client and can be forged. Pair it with rate limits on sensitive endpoints.</div>
+
+  <h2>1 · Create site keys</h2>
+  <p>Create <code>config/sites.json</code> on your FastFlare server (it is git-ignored). Use long random secrets.</p>
+<pre><code>{
+  "ff_site_3f9a1c": {
+    "secret": "REPLACE_WITH_openssl_rand_-hex_32",
+    "origins": ["https://example.com", "https://www.example.com"]
+  }
+}</code></pre>
+  <p><code>origins</code> is optional. When set, only browsers on those origins can request challenges for that key. Without any config the server enables a public demo key, <code>ff_demo_site</code> / <code>ff_demo_secret</code>, for testing only.</p>
+
+  <h2>2 · Add the widget to your page</h2>
+<pre><code>&lt;script src="https://YOUR-FASTFLARE-HOST/fastflare.js" async defer&gt;&lt;/script&gt;
+
+&lt;form method="post" action="/signup"&gt;
+  &lt;input name="email" type="email" required&gt;
+  &lt;div class="ff-captcha" data-sitekey="ff_site_3f9a1c"&gt;&lt;/div&gt;
+  &lt;button&gt;Sign up&lt;/button&gt;
+&lt;/form&gt;</code></pre>
+  <p>The widget adds a hidden field named <code>ff-token</code> to the form and keeps it fresh (tokens last two minutes, and the widget renews them). Because the script is loaded from your own FastFlare host, it knows where to talk to automatically. If you host <code>fastflare.js</code> elsewhere, add <code>data-api="https://YOUR-FASTFLARE-HOST"</code>.</p>
+
+  <h3>Options (data attributes or JS)</h3>
+  <table>
+    <tr><th>Attribute</th><th>Meaning</th></tr>
+    <tr><td><code>data-sitekey</code></td><td>Required. Your site key.</td></tr>
+    <tr><td><code>data-api</code></td><td>FastFlare server URL. Defaults to the origin <code>fastflare.js</code> was loaded from.</td></tr>
+    <tr><td><code>data-callback</code></td><td>Name of a global function called with the token.</td></tr>
+    <tr><td><code>data-expired-callback</code>, <code>data-error-callback</code></td><td>Names of global functions.</td></tr>
+    <tr><td><code>data-theme</code></td><td><code>light</code>, <code>dark</code> or <code>auto</code> (default).</td></tr>
+    <tr><td><code>data-field</code></td><td>Hidden input name (default <code>ff-token</code>).</td></tr>
+    <tr><td><code>data-settle</code></td><td>Milliseconds to wait for a sign of human interaction before submitting (default 1200).</td></tr>
+  </table>
+
+  <h3>Programmatic and invisible use</h3>
+<pre><code>// Render into any element
+const w = FastFlare.render('#box', { sitekey: 'ff_site_3f9a1c', theme: 'dark', callback: (t) =&gt; console.log(t) });
+w.token();   // current token or null
+w.reset();   // solve again
+
+// No UI at all: get a token before calling your own API
+const token = await FastFlare.execute({ sitekey: 'ff_site_3f9a1c', api: 'https://YOUR-FASTFLARE-HOST' });
+await fetch('/api/comment', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ text, 'ff-token': token }) });</code></pre>
+
+  <h2>3 · Verify on your server</h2>
+  <p><strong>Always verify server-side.</strong> A token in the browser proves nothing until your backend checks it. Tokens are single-use and expire after two minutes.</p>
+  <p><code>POST /captcha/siteverify</code> with <code>secret</code>, <code>response</code> (the token) and optionally <code>remoteip</code>. JSON and form encoding both work, like reCAPTCHA.</p>
+
+<pre><code>// Node 18+
+const r = await fetch('https://YOUR-FASTFLARE-HOST/captcha/siteverify', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ secret: process.env.FF_SECRET_KEY, response: req.body['ff-token'], remoteip: req.ip }),
+});
+const out = await r.json();           // { success: true, challenge_ts: "...", score: 0.9 }
+if (!out.success) return res.status(400).send('Bot check failed');</code></pre>
+
+<pre><code># Python
+import requests
+out = requests.post("https://YOUR-FASTFLARE-HOST/captcha/siteverify",
+    data={"secret": SECRET, "response": request.form["ff-token"], "remoteip": request.remote_addr}).json()
+if not out["success"]:
+    abort(400)</code></pre>
+
+<pre><code>// PHP
+$out = json_decode(file_get_contents('https://YOUR-FASTFLARE-HOST/captcha/siteverify', false, stream_context_create(['http' => [
+  'method' => 'POST', 'header' => 'Content-Type: application/x-www-form-urlencoded',
+  'content' => http_build_query(['secret' => $secret, 'response' => $_POST['ff-token'], 'remoteip' => $_SERVER['REMOTE_ADDR']]),
+]])), true);
+if (empty($out['success'])) { http_response_code(400); exit; }</code></pre>
+
+  <h3>Responses</h3>
+<pre><code>{ "success": true, "challenge_ts": "2026-11-22T09:30:00.000Z", "score": 0.9 }
+{ "success": false, "error-codes": ["timeout-or-duplicate"] }</code></pre>
+  <p>Error codes: <code>invalid-input-secret</code>, <code>invalid-input-response</code>, <code>timeout-or-duplicate</code>, <code>remoteip-mismatch</code>. <code>score</code> is 0 to 1 (higher is more human-looking). Use it to decide whether to add your own extra checks on risky actions.</p>
+
+  <h2>Live demo</h2>
+  <p>Uses the demo key against a FastFlare server you enter (the page below on GitHub Pages is static, so it needs a running server).</p>
+  <div class="card">
+    <label for="api">FastFlare server URL</label>
+    <input id="api" size="40" placeholder="https://your-host or http://localhost:8787">
+    <button class="btn" id="go" style="margin-left:8px">Run widget</button>
+    <div id="demo" style="margin-top:18px"></div>
+    <pre id="out" style="display:none"></pre>
+  </div>
+  <script src="fastflare.js"></script>
+  <script>
+    var apiInput = document.getElementById('api');
+    if (location.protocol !== 'file:' && !/github\.io$/.test(location.hostname)) apiInput.value = location.origin;
+    document.getElementById('go').onclick = function () {
+      var el = document.getElementById('demo'), out = document.getElementById('out');
+      el.innerHTML = ''; out.style.display = 'none';
+      var api = apiInput.value.replace(/\/$/, '');
+      FastFlare.render(el, {
+        sitekey: 'ff_demo_site', api: api, theme: 'dark',
+        callback: function (t) { out.style.display = 'block'; out.textContent = 'ff-token = ' + t.slice(0, 60) + '…\nSend this to your backend, which calls /captcha/siteverify.'; },
+      });
+    };
+  </script>
+
+  <h2>Server API reference</h2>
+  <table>
+    <tr><th>Endpoint</th><th>Called by</th><th>Purpose</th></tr>
+    <tr><td><code>POST /captcha/challenge</code> <code>{sitekey}</code></td><td>Browser</td><td>Returns a signed proof-of-work challenge.</td></tr>
+    <tr><td><code>POST /captcha/verify</code> <code>{sitekey, challenge, nonce, signals, hp}</code></td><td>Browser</td><td>Checks the proof and signals. Returns <code>{ok, token}</code>, <code>{ok:false, retry:true, challenge}</code> (step-up) or 403.</td></tr>
+    <tr><td><code>POST /captcha/siteverify</code> <code>{secret, response, remoteip?}</code></td><td>Your backend</td><td>Validates and consumes a token. Has no CORS headers on purpose, since it takes your secret.</td></tr>
+  </table>
+  <p>Keep <code>FF_SECRET</code> stable and shared if you run several instances. Behind a proxy, set <code>TRUST_PROXY=1</code>.</p>
+</main>
+<footer>FastFlare · <a href="https://github.com/ArthWarrior3201/FastFlare">source on GitHub</a></footer>
+</body>
+</html>

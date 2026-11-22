@@ -1,0 +1,15 @@
+{
+  "name": "fastflare",
+  "version": "0.1.0",
+  "description": "FastFlare: CAPTCHA-free bot protection, a provider/city speed test, and a consensus time server (EnvTime) in one zero-dependency Node service.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "keywords": ["captcha", "proof-of-work", "speedtest", "ntp", "time-server"]
+}

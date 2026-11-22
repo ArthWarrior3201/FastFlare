@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FastFlare Speed Test</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .controls { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
+  .controls select, .controls input { width: 100%; }
+  .stats { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin: 24px 0; }
+  .stat { padding: 18px 20px; }
+  .stat .k { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+  .stat .v { font-size: 38px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+  .stat .u { font-size: 15px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+  .stat .s { color: var(--muted); font-size: 13px; min-height: 1.4em; }
+  .charts { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+  @media (max-width: 520px) { .charts { grid-template-columns: 1fr; } }
+  .chart h3 { margin: 0 0 10px; font-size: 15px; color: var(--muted); font-weight: 600; }
+  canvas { width: 100%; height: 190px; display: block; }
+  #status { color: var(--muted); min-height: 1.6em; margin-top: 12px; }
+  #status.err { color: var(--bad); }
+  details { margin-top: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">Fast<span>Flare</span></a>
+  <nav>
+    <a href="captcha.html">CAPTCHA</a>
+    <a href="speedtest.html">Speed Test</a>
+    <a href="envtime.html">EnvTime</a>
+    <a href="speedtest-app.html" aria-current="page">Live speed test</a>
+    <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
+  </nav>
+</header>
+<main class="wide">
+  <h1>Speed <em>test</em></h1>
+  <p class="lead">Choose a provider, then a city it has a server in, and start.</p>
+
+  <div class="card">
+    <div class="controls">
+      <div><label for="provider">Provider</label><select id="provider" disabled></select></div>
+      <div><label for="city">City</label><select id="city" disabled></select></div>
+      <div><button class="btn" id="start" disabled>Start test</button> <button class="btn ghost" id="stop" hidden>Stop</button></div>
+    </div>
+    <details id="adv">
+      <summary>Registry server</summary>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <input id="api" size="38" placeholder="https://your-fastflare-host" aria-label="FastFlare registry URL">
+        <button class="btn ghost" id="load">Load servers</button>
+      </div>
+    </details>
+    <div id="status" role="status" aria-live="polite">Loading servers…</div>
+  </div>
+
+  <div class="stats">
+    <div class="card stat"><div class="k">Download</div><div class="v"><span id="dl">–</span><span class="u">Mbps</span></div><div class="s" id="dls"></div></div>
+    <div class="card stat"><div class="k">Upload</div><div class="v"><span id="ul">–</span><span class="u">Mbps</span></div><div class="s" id="uls"></div></div>
+    <div class="card stat"><div class="k">Latency</div><div class="v"><span id="lat">–</span><span class="u">ms</span></div><div class="s" id="lats"></div></div>
+    <div class="card stat"><div class="k">Jitter</div><div class="v"><span id="jit">–</span><span class="u">ms</span></div><div class="s" id="jits"></div></div>
+  </div>
+
+  <div class="charts">
+    <div class="card chart"><h3>Download throughput (Mbps over time)</h3><canvas id="cdl"></canvas></div>
+    <div class="card chart"><h3>Upload throughput (Mbps over time)</h3><canvas id="cul"></canvas></div>
+    <div class="card chart"><h3>Latency per ping (ms)</h3><canvas id="clat"></canvas></div>
+    <div class="card chart"><h3>Latency distribution</h3><canvas id="chist"></canvas></div>
+  </div>
+</main>
+<footer>FastFlare · <a href="https://github.com/ArthWarrior3201/FastFlare">source on GitHub</a></footer>
+
+<script src="fastflare-speedtest.js"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var params = new URLSearchParams(location.search);
+  var hosted = location.protocol !== 'file:' && !/github\.io$/.test(location.hostname);
+  $('api').value = params.get('api') || localStorage.getItem('ff-api') || (hosted ? location.origin : '');
+
+  var st = null, ctrl = null;
+  var css = getComputedStyle(document.documentElement);
+  var C = { flare: '#ff8a3d', pink: '#ff4d8d', violet: '#7c5cff', grid: '#242a55', text: '#8f97bd' };
+
+  function status(msg, err) { var s = $('status'); s.textContent = msg; s.className = err ? 'err' : ''; }
+
+  // ---- Tiny canvas charts --------------------------------------------------------------------
+  function setup(canvas) {
+    var r = canvas.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, r.width * d); canvas.height = Math.max(1, r.height * d);
+    var g = canvas.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0);
+    return { g: g, w: r.width, h: r.height };
+  }
+  var pad = { l: 44, r: 10, t: 8, b: 22 };
+  function axes(c, xmax, ymax, xlabel, fmt) {
+    var g = c.g; g.clearRect(0, 0, c.w, c.h); g.font = '11px system-ui'; g.fillStyle = C.text; g.strokeStyle = C.grid; g.lineWidth = 1;
+    for (var i = 0; i <= 4; i++) {
+      var y = pad.t + (c.h - pad.t - pad.b) * (1 - i / 4);
+      g.beginPath(); g.moveTo(pad.l, y); g.lineTo(c.w - pad.r, y); g.stroke();
+      g.textAlign = 'right'; g.fillText((fmt || function (v) { return v.toFixed(0); })(ymax * i / 4), pad.l - 6, y + 4);
+    }
+    g.textAlign = 'center';
+    for (var j = 0; j <= 4; j++) g.fillText((xmax * j / 4).toFixed(xmax > 20 ? 0 : 1) + (xlabel || ''), pad.l + (c.w - pad.l - pad.r) * j / 4, c.h - 6);
+  }
+  function niceMax(v) { if (v <= 0) return 1; var p = Math.pow(10, Math.floor(Math.log10(v))); var n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
+  function line(id, pts, color, xlabel) {
+    var c = setup($(id)); if (!pts.length) { axes(c, 1, 1, xlabel); return; }
+    var xmax = Math.max.apply(null, pts.map(function (p) { return p.x; })) || 1;
+    var ymax = niceMax(Math.max.apply(null, pts.map(function (p) { return p.y; })) * 1.1);
+    axes(c, xmax, ymax, xlabel, ymax < 10 ? function (v) { return v.toFixed(1); } : undefined);
+    var g = c.g, W = c.w - pad.l - pad.r, H = c.h - pad.t - pad.b;
+    function X(x) { return pad.l + W * x / xmax; } function Y(y) { return pad.t + H * (1 - y / ymax); }
+    g.beginPath(); pts.forEach(function (p, i) { i ? g.lineTo(X(p.x), Y(p.y)) : g.moveTo(X(p.x), Y(p.y)); });
+    g.lineTo(X(pts[pts.length - 1].x), pad.t + H); g.lineTo(X(pts[0].x), pad.t + H); g.closePath();
+    var grad = g.createLinearGradient(0, pad.t, 0, pad.t + H); grad.addColorStop(0, color + '66'); grad.addColorStop(1, color + '00');
+    g.fillStyle = grad; g.fill();
+    g.beginPath(); pts.forEach(function (p, i) { i ? g.lineTo(X(p.x), Y(p.y)) : g.moveTo(X(p.x), Y(p.y)); });
+    g.strokeStyle = color; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
+  }
+  function pingChart(samples, lat) {
+    var c = setup($('clat')); var n = samples.length;
+    if (!n) { axes(c, 1, 1); return; }
+    var ymax = niceMax(Math.max.apply(null, samples) * 1.15);
+    axes(c, n, ymax, '', ymax < 10 ? function (v) { return v.toFixed(1); } : undefined);
+    var g = c.g, W = c.w - pad.l - pad.r, H = c.h - pad.t - pad.b;
+    function X(i) { return pad.l + W * (i + 0.5) / n; } function Y(y) { return pad.t + H * (1 - y / ymax); }
+    if (lat) { g.setLineDash([4, 4]); g.strokeStyle = C.violet; g.beginPath(); g.moveTo(pad.l, Y(lat.median)); g.lineTo(c.w - pad.r, Y(lat.median)); g.stroke(); g.setLineDash([]); }
+    g.beginPath(); samples.forEach(function (v, i) { i ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v)); });
+    g.strokeStyle = C.flare; g.lineWidth = 2; g.stroke();
+    g.fillStyle = C.pink; samples.forEach(function (v, i) { g.beginPath(); g.arc(X(i), Y(v), 2.6, 0, 6.3); g.fill(); });
+  }
+  function histChart(samples) {
+    var c = setup($('chist')); if (samples.length < 2) { axes(c, 1, 1); return; }
+    var min = Math.min.apply(null, samples), max = Math.max.apply(null, samples), bins = 12, span = (max - min) || 1;
+    var counts = new Array(bins).fill(0);
+    samples.forEach(function (v) { counts[Math.min(bins - 1, Math.floor((v - min) / span * bins))]++; });
+    var ymax = Math.max.apply(null, counts);
+    axes(c, span, ymax, '', function (v) { return v.toFixed(0); });
+    var g = c.g, W = c.w - pad.l - pad.r, H = c.h - pad.t - pad.b;
+    g.fillStyle = C.violet;
+    counts.forEach(function (n, i) { var bw = W / bins; g.fillRect(pad.l + i * bw + 2, pad.t + H * (1 - n / ymax), bw - 4, H * n / ymax); });
+    g.fillStyle = C.text; g.textAlign = 'left'; g.fillText(min.toFixed(1) + ' ms', pad.l, 12); g.textAlign = 'right'; g.fillText(max.toFixed(1) + ' ms', c.w - pad.r, 12);
+  }
+  function clearAll() { ['dl', 'ul', 'lat', 'jit'].forEach(function (k) { $(k).textContent = '–'; }); ['dls', 'uls', 'lats', 'jits'].forEach(function (k) { $(k).textContent = ''; });
+    line('cdl', [], C.flare, 's'); line('cul', [], C.pink, 's'); pingChart([]); histChart([]); }
+
+  // ---- Provider -> city -> start -------------------------------------------------------------
+  function fillProviders() {
+    var ps = st.providers();
+    $('provider').innerHTML = ps.map(function (p) { return '<option>' + p.replace(/</g, '&lt;') + '</option>'; }).join('');
+    $('provider').disabled = !ps.length; fillCities();
+  }
+  function fillCities() {
+    var cs = st.cities($('provider').value);
+    $('city').innerHTML = cs.map(function (s) { return '<option value="' + s.id + '">' + (s.city + (s.country ? ', ' + s.country : '')).replace(/</g, '&lt;') + '</option>'; }).join('');
+    $('city').disabled = !cs.length; $('start').disabled = !cs.length;
+  }
+  $('provider').onchange = fillCities;
+
+  function load() {
+    var api = $('api').value.replace(/\/$/, '');
+    if (!api) { status('Enter your FastFlare registry URL under "Registry server" to load providers.', true); $('adv').open = true; return; }
+    localStorage.setItem('ff-api', api);
+    st = new FastFlareSpeedTest({ api: api });
+    status('Loading servers…');
+    st.loadServers().then(function () { fillProviders(); status(st.servers.length ? 'Ready.' : 'This registry lists no servers.', !st.servers.length); })
+      .catch(function (e) { status('Could not load servers from ' + api + ' (' + e.message + ').', true); $('adv').open = true; });
+  }
+  $('load').onclick = load;
+
+  $('start').onclick = function () {
+    ctrl = new AbortController(); clearAll();
+    $('start').disabled = true; $('stop').hidden = false; $('provider').disabled = $('city').disabled = true;
+    var pings = [];
+    st.run({
+      serverId: $('city').value, signal: ctrl.signal,
+      onPhase: function (p) { status({ latency: 'Measuring latency and jitter…', download: 'Testing download…', upload: 'Testing upload…', done: 'Done.' }[p]); },
+      onPing: function (ms, i, s) { pings = s.slice(); $('lat').textContent = ms.toFixed(1); pingChart(pings); },
+      onProgress: function (p) {
+        $(p.phase === 'download' ? 'dl' : 'ul').textContent = p.mbps.toFixed(1);
+        line(p.phase === 'download' ? 'cdl' : 'cul', p.series.map(function (x) { return { x: x.t, y: x.mbps }; }), p.phase === 'download' ? C.flare : C.pink, 's');
+      },
+    }).then(function (r) {
+      $('dl').textContent = r.download.mbps.toFixed(1); $('ul').textContent = r.upload.mbps.toFixed(1);
+      $('lat').textContent = r.latency.median.toFixed(1); $('jit').textContent = r.latency.jitter.toFixed(1);
+      $('dls').textContent = '90th percentile of ' + r.download.stages.length + ' stages';
+      $('uls').textContent = '90th percentile of ' + r.upload.stages.length + ' stages';
+      $('lats').textContent = 'min ' + r.latency.min.toFixed(1) + ' · p90 ' + r.latency.p90.toFixed(1) + ' · max ' + r.latency.max.toFixed(1);
+      $('jits').textContent = 'packet loss ' + (r.latency.loss * 100).toFixed(0) + '%';
+      pingChart(r.latency.samples, r.latency); histChart(r.latency.samples);
+      status('Done: ' + r.server.provider + ', ' + r.server.city + ' in ' + (r.durationMs / 1000).toFixed(1) + ' s.');
+    }).catch(function (e) { status(e && e.name === 'AbortError' ? 'Stopped.' : 'Test failed: ' + e.message, !(e && e.name === 'AbortError')); })
+      .then(function () { $('start').disabled = false; $('stop').hidden = true; $('provider').disabled = $('city').disabled = false; });
+  };
+  $('stop').onclick = function () { if (ctrl) ctrl.abort(); };
+
+  window.addEventListener('resize', function () { /* charts redraw on the next update */ });
+  clearAll();
+  if ($('api').value) load(); else { status('Enter your FastFlare registry URL under "Registry server" to load providers.', true); $('adv').open = true; }
+})();
+</script>
+</body>
+</html>

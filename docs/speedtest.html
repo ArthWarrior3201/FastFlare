@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FastFlare Speed Test integration</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">Fast<span>Flare</span></a>
+  <nav>
+    <a href="captcha.html">CAPTCHA</a>
+    <a href="speedtest.html" aria-current="page">Speed Test</a>
+    <a href="envtime.html">EnvTime</a>
+    <a href="speedtest-app.html">Live speed test</a>
+    <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
+  </nav>
+</header>
+<main>
+  <h1>Speed test, <em>by provider and city</em></h1>
+  <p class="lead">Visitors pick a provider, then a city that provider has a server in, and run a test against that exact server. You get download, upload, latency, jitter and packet loss, plus live throughput data for graphs.</p>
+  <p><a class="btn" href="speedtest-app.html">Open the live speed test</a></p>
+
+  <h2>How the provider and city list works</h2>
+  <p>A speed test is only meaningful against a real server, so each location is a FastFlare node you run. Start the same server on a VM at each provider and city, and tell it where it is:</p>
+<pre><code># On a VM in AWS Frankfurt
+FF_PROVIDER="AWS" FF_CITY="Frankfurt" FF_COUNTRY="DE" \
+FF_PUBLIC_URL="https://fra.speed.example.com" node src/server.js</code></pre>
+  <p>Then pick one node to be the <strong>registry</strong> and list the others in its <code>config/servers.json</code>:</p>
+<pre><code>[
+  { "provider": "AWS",     "city": "Frankfurt", "country": "DE", "url": "https://fra.speed.example.com" },
+  { "provider": "AWS",     "city": "Mumbai",    "country": "IN", "url": "https://bom.speed.example.com" },
+  { "provider": "Hetzner", "city": "Helsinki",  "country": "FI", "url": "https://hel.speed.example.com" },
+  { "provider": "Google Cloud", "city": "Singapore", "country": "SG", "url": "https://sin.speed.example.com" }
+]</code></pre>
+  <p>The registry's own <code>FF_PROVIDER</code> / <code>FF_CITY</code> are listed too. The city dropdown only shows cities where the chosen provider has a node, because it is built from this list. Nodes need HTTPS if the page using them is HTTPS, and every node sends CORS headers so the browser can talk to any of them.</p>
+  <div class="note">Each node serves test traffic for anyone who asks, capped per request by <code>FF_MAX_BYTES</code> (default 100 MB). Put a bandwidth cap or rate limit in front of public nodes.</div>
+
+  <h2>Embed it in your app</h2>
+<pre><code>&lt;script src="https://YOUR-REGISTRY-HOST/fastflare-speedtest.js"&gt;&lt;/script&gt;
+
+&lt;select id="provider"&gt;&lt;/select&gt; &lt;select id="city"&gt;&lt;/select&gt; &lt;button id="start"&gt;Start&lt;/button&gt;
+&lt;pre id="out"&gt;&lt;/pre&gt;
+
+&lt;script&gt;
+const st = new FastFlareSpeedTest({ api: 'https://YOUR-REGISTRY-HOST' });
+const $ = (id) =&gt; document.getElementById(id);
+
+st.loadServers().then(() =&gt; {
+  $('provider').innerHTML = st.providers().map(p =&gt; `&lt;option&gt;${p}&lt;/option&gt;`).join('');
+  fillCities();
+});
+function fillCities() {   // only cities the selected provider is available in
+  $('city').innerHTML = st.cities($('provider').value).map(s =&gt; `&lt;option value="${s.id}"&gt;${s.city}&lt;/option&gt;`).join('');
+}
+$('provider').onchange = fillCities;
+
+$('start').onclick = async () =&gt; {
+  const result = await st.run({
+    serverId: $('city').value,
+    onPhase: (p) =&gt; ($('out').textContent = 'Testing: ' + p),
+    onProgress: ({ phase, mbps }) =&gt; ($('out').textContent = `${phase}: ${mbps.toFixed(1)} Mbps`),
+  });
+  $('out').textContent =
+    `Download ${result.download.mbps.toFixed(1)} Mbps\n` +
+    `Upload   ${result.upload.mbps.toFixed(1)} Mbps\n` +
+    `Latency  ${result.latency.median.toFixed(1)} ms (jitter ${result.latency.jitter.toFixed(1)} ms, loss ${(result.latency.loss * 100).toFixed(0)}%)`;
+};
+&lt;/script&gt;</code></pre>
+
+  <h2>API</h2>
+  <h3><code>new FastFlareSpeedTest(options)</code></h3>
+  <table>
+    <tr><th>Option</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td><code>api</code></td><td>(required)</td><td>URL of the registry node.</td></tr>
+    <tr><td><code>registry</code></td><td><code>api + '/speed/servers'</code></td><td>Full URL of the server list, if you host it elsewhere.</td></tr>
+    <tr><td><code>pings</code></td><td>20</td><td>Number of latency samples.</td></tr>
+    <tr><td><code>downloadPlan</code>, <code>uploadPlan</code></td><td>staged 100 KB to 50 MB</td><td>Arrays of <code>{bytes, count, parallel}</code> stages. Stages that would take over <code>maxStageSeconds</code> (10) are skipped on slow links.</td></tr>
+  </table>
+  <h3>Methods</h3>
+  <table>
+    <tr><td><code>loadServers()</code></td><td>Fetches the registry. Resolves the server list.</td></tr>
+    <tr><td><code>providers()</code></td><td>Sorted provider names.</td></tr>
+    <tr><td><code>cities(provider)</code></td><td>Servers of that provider (<code>id, provider, city, country, url</code>).</td></tr>
+    <tr><td><code>run({serverId | server, signal, onPhase, onProgress, onPing})</code></td><td>Latency, then download, then upload. Pass an <code>AbortSignal</code> to cancel.</td></tr>
+  </table>
+  <h3>Result</h3>
+<pre><code>{
+  server: { id, provider, city, country, url },
+  latency:  { min, median, mean, p90, max, jitter, loss, samples: [ms, ...] },
+  download: { mbps, stages: [{ bytes, count, parallel, mbps, ms }], series: [{ t, mbps }, ...] },
+  upload:   { mbps, stages: [...], series: [...] },
+  startedAt, durationMs
+}</code></pre>
+  <p><code>mbps</code> is the 90th percentile across the 1 MB and larger stages. Each stage subtracts one median round trip so distance doesn't pretend to be a slow line. <code>jitter</code> is the mean absolute difference between consecutive pings. <code>series</code> is throughput over time (about every 100 ms) for drawing graphs; the live page draws it on a canvas.</p>
+
+  <h2>Server endpoints</h2>
+  <table>
+    <tr><td><code>GET /speed/servers</code></td><td>The provider/city registry.</td></tr>
+    <tr><td><code>GET /speed/ping</code></td><td>Empty reply, for latency.</td></tr>
+    <tr><td><code>GET /speed/down?bytes=N</code></td><td>Streams N random bytes.</td></tr>
+    <tr><td><code>POST /speed/up</code></td><td>Consumes the body, returns <code>{bytes, ms}</code>.</td></tr>
+    <tr><td><code>GET /speed/info</code></td><td>This node's description and the caller's IP.</td></tr>
+  </table>
+</main>
+<footer>FastFlare · <a href="https://github.com/ArthWarrior3201/FastFlare">source on GitHub</a></footer>
+</body>
+</html>

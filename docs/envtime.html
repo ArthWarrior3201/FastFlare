@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FastFlare EnvTime</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">Fast<span>Flare</span></a>
+  <nav>
+    <a href="captcha.html">CAPTCHA</a>
+    <a href="speedtest.html">Speed Test</a>
+    <a href="envtime.html" aria-current="page">EnvTime</a>
+    <a href="speedtest-app.html">Live speed test</a>
+    <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
+  </nav>
+</header>
+<main>
+  <h1>EnvTime, <em>time by majority vote</em></h1>
+  <p class="lead">Asks several public time servers over NTP, drops any that disagree with the majority, and serves the agreed time over HTTP for any time zone and over NTP so Windows can use it as a time server.</p>
+
+  <h2>How it stays precise</h2>
+  <ul>
+    <li><strong>Parallel queries.</strong> Each round asks every upstream (default: <code>time.google.com</code>, <code>time.apple.com</code>, <code>time.windows.com</code>, <code>time.cloudflare.com</code>, <code>time.nist.gov</code>, <code>pool.ntp.org</code>) at once.</li>
+    <li><strong>Doesn't wait for slow ones.</strong> As soon as 3 have answered, it gives the rest 60 ms, then leaves any still pending. A hard 1.2 s limit applies if fewer answer.</li>
+    <li><strong>Majority vote.</strong> It takes the median offset. Any provider further from it than 50 ms (plus half its own round trip) is kicked for that round only and will be asked again next round. No majority means the round is discarded and the previous time keeps running.</li>
+    <li><strong>Latency compensation.</strong> Every sample uses the NTP four-timestamp offset <code>((T2-T1)+(T3-T4))/2</code>, which cancels the network delay.</li>
+    <li><strong>Always tracking.</strong> A background loop re-syncs about every 32 s with jitter, and a request just reads the live clock (monotonic time plus the tracked offset and drift). Answering needs no network call, so a request is served in microseconds and can't be slowed or made inaccurate by upstream latency. Add <code>?fresh=1</code> to force an extra round (rate-limited to one per 2 s).</li>
+  </ul>
+  <div class="note"><strong>About <code>time.is</code>.</strong> It is a website, not an NTP server, so it can't be part of the vote. Web time checks only have one-second resolution, which is too coarse to outvote NTP servers accurate to milliseconds. Add more NTP hosts with <code>FF_TIME_PROVIDERS</code> instead.</div>
+  <div class="note"><strong>Expected accuracy.</strong> Typically a few milliseconds over a normal internet connection. The <code>uncertaintyMs</code> field in every reply is the honest bound for that moment. It is not atomic-clock timekeeping.</div>
+
+  <h2>HTTP API</h2>
+<pre><code>GET /time?tz=Asia/Kolkata
+
+{
+  "unixMs": 1795347120123,
+  "unix": 1795347120,
+  "utc": "2026-11-22T09:32:00.123Z",
+  "timeZone": "Asia/Kolkata",
+  "abbreviation": "GMT+5:30",
+  "offsetMinutes": 330,
+  "local": "2026-11-22T15:02:00.123+05:30",
+  "synced": true,
+  "uncertaintyMs": 4.3,
+  "sources": { "used": ["time.google.com", "time.apple.com", "time.windows.com"], "kicked": [] }
+}</code></pre>
+  <p><code>tz</code> is any IANA zone (<code>America/New_York</code>, <code>Europe/London</code>, <code>UTC</code>). It defaults to UTC. Unknown zones return 400. <code>GET /time/status</code> shows the last round: which providers were used, kicked, failed or skipped as slow, the tracked offset and drift.</p>
+
+  <h2>Use it as your Windows time server</h2>
+  <p>Windows speaks NTP on <strong>UDP port 123</strong> only, so FastFlare's NTP server must listen there. Run it on a Linux host or container with that port reachable:</p>
+<pre><code>docker run -d --name fastflare -p 8787:8787 -p 123:123/udp -e FF_SECRET=... fastflare
+# or: sudo setcap 'cap_net_bind_service=+ep' $(which node)  &amp;&amp;  node src/server.js</code></pre>
+  <p>Then, in an <strong>administrator</strong> Command Prompt on the Windows machine (replace the host):</p>
+<pre><code>w32tm /config /manualpeerlist:"time.example.com,0x8" /syncfromflags:manual /reliable:no /update
+net stop w32time &amp;&amp; net start w32time
+w32tm /resync /force
+w32tm /query /status
+w32tm /stripchart /computer:time.example.com /samples:5 /dataonly</code></pre>
+  <p>The last command prints the offset between that PC and FastFlare, so you can see it working. Don't run FastFlare's NTP server on the same Windows machine as <code>w32time</code>: both want UDP 123. Run it elsewhere (a small VPS or a Linux box).</p>
+  <p>Linux with chrony: add <code>server time.example.com iburst</code> to <code>chrony.conf</code>.</p>
+  <p>Until the first round succeeds, the NTP server answers as "unsynchronized" (stratum 16), so clients ignore it instead of trusting a guess.</p>
+
+  <h2>Configuration</h2>
+  <table>
+    <tr><th>Variable</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td><code>FF_TIME_PROVIDERS</code></td><td>the six above</td><td>Comma-separated <code>host</code> or <code>host:port</code>.</td></tr>
+    <tr><td><code>FF_TIME_MIN_VOTES</code></td><td>3</td><td>Answers needed before the grace window starts.</td></tr>
+    <tr><td><code>FF_TIME_GRACE_MS</code></td><td>60</td><td>Extra wait for stragglers after the minimum is met.</td></tr>
+    <tr><td><code>FF_TIME_TIMEOUT_MS</code></td><td>1200</td><td>Hard limit for a round.</td></tr>
+    <tr><td><code>FF_TIME_TOLERANCE_MS</code></td><td>50</td><td>How far from the median a provider may be before it is kicked.</td></tr>
+    <tr><td><code>FF_TIME_POLL_MS</code></td><td>32000</td><td>Background re-sync interval. Public servers rate-limit abusive polling, so don't set this too low.</td></tr>
+    <tr><td><code>NTP_PORT</code> / <code>FF_NTP=0</code></td><td>123</td><td>UDP port for serving NTP, or disable it.</td></tr>
+  </table>
+  <p>Google's time servers "smear" leap seconds while others step them. Around a leap second they can disagree by up to half a second; the majority vote handles that by kicking the odd ones out.</p>
+
+  <h2>Try it</h2>
+  <div class="card">
+    <label for="api">FastFlare server URL</label>
+    <input id="api" size="36" placeholder="http://localhost:8787">
+    <label for="tz" style="margin-top:10px">Time zone</label>
+    <input id="tz" value="Asia/Kolkata" size="24">
+    <button class="btn" id="go" style="margin-left:8px">Get time</button>
+    <pre id="out" style="min-height:90px">…</pre>
+  </div>
+  <script>
+    var api = document.getElementById('api');
+    if (location.protocol !== 'file:' && !/github\.io$/.test(location.hostname)) api.value = location.origin;
+    document.getElementById('go').onclick = function () {
+      var out = document.getElementById('out');
+      out.textContent = 'Asking…';
+      fetch(api.value.replace(/\/$/, '') + '/time?tz=' + encodeURIComponent(document.getElementById('tz').value))
+        .then(function (r) { return r.json(); })
+        .then(function (j) { out.textContent = JSON.stringify(j, null, 2); })
+        .catch(function (e) { out.textContent = 'Could not reach that server: ' + e.message; });
+    };
+  </script>
+</main>
+<footer>FastFlare · <a href="https://github.com/ArthWarrior3201/FastFlare">source on GitHub</a></footer>
+</body>
+</html>

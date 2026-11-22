@@ -1,0 +1,6 @@
+{
+  "ff_site_REPLACE_ME": {
+    "secret": "REPLACE_WITH_A_LONG_RANDOM_STRING (openssl rand -hex 32)",
+    "origins": ["https://example.com"]
+  }
+}
