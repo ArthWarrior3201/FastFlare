@@ -208,12 +208,22 @@ test('CAPTCHA: wrong proof, forged challenge, honeypot and automation are reject
   });
 });
 
+test('CAPTCHA: signals claiming more time on page than the server observed are rejected', async () => {
+  await withApp(async (base) => {
+    const core = loadWidgetCore();
+    const { challenge } = await (await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' })).json();
+    const nonce = String(core.solve(`${challenge.id}.${challenge.salt}.`, challenge.difficulty, 0, 1e7));
+    const r = await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce, signals: { ...HUMAN, dt: 60000 } });
+    assert.equal(r.status, 403);
+  });
+});
+
 test('CAPTCHA: borderline traffic gets a harder second challenge', async () => {
   await withApp(async (base) => {
     const core = loadWidgetCore();
     const { challenge } = await (await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' })).json();
     // Looks like a browser but reports no languages and no interaction: score lands in the step-up band.
-    const shady = { wd: false, lg: 0, sw: 1920, sh: 1080, pm: 0, kd: 0, tc: 0, sc: 0, dt: 5000 };
+    const shady = { wd: false, lg: 0, sw: 1920, sh: 1080, pm: 0, kd: 0, tc: 0, sc: 0, dt: 3000 };
     const nonce = String(core.solve(`${challenge.id}.${challenge.salt}.`, challenge.difficulty, 0, 1e7));
     const r1 = await (await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce, signals: shady })).json();
     assert.equal(r1.retry, true);

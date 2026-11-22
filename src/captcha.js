@@ -141,6 +141,16 @@ export function createCaptcha({ secret, sites, trustProxy = false, baseBits = 16
     usedChallenges.set(c.id, c.exp + 1000);
 
     if (hp) throw httpError(403, 'failed'); // honeypot field filled in: only bots do that
+
+    // The browser reports how long it has been on the page. The server saw the challenge being
+    // issued, so a client claiming a much longer dwell than the server observed is making it up.
+    const observed = now() - (c.exp - CHALLENGE_TTL);
+    const claimed = Number(signals && signals.dt);
+    if (Number.isFinite(claimed) && claimed > observed + 4000) {
+      const e = httpError(403, 'failed');
+      e.reasons = ['inconsistent-timing'];
+      throw e;
+    }
     const { score, reasons } = scoreSignals(signals, ua);
     const needed = c.attempt >= 1 ? STEPUP_PASS_SCORE : PASS_SCORE;
 
