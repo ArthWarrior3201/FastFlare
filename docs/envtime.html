@@ -63,6 +63,12 @@ w32tm /stripchart /computer:time.example.com /samples:5 /dataonly</code></pre>
   <p>Linux with chrony: add <code>server time.example.com iburst</code> to <code>chrony.conf</code>.</p>
   <p>Until the first round succeeds, the NTP server answers as "unsynchronized" (stratum 16), so clients ignore it instead of trusting a guess.</p>
 
+  <h2>No UDP? Host it on the web and sync Windows over HTTPS</h2>
+  <p>Most free web hosts (Render, Vercel, Koyeb and similar) only expose HTTP, so Windows' built-in NTP client can't use them. Host FastFlare there anyway (set <code>FF_NTP=0</code>) and let Windows pull the time over HTTPS with the included script. In an <strong>administrator PowerShell</strong>:</p>
+<pre><code>powershell -ExecutionPolicy Bypass -File windows-sync.ps1 -Server https://your-app.onrender.com -Install</code></pre>
+  <p>It takes 5 samples, keeps the one with the shortest round trip, adds half that round trip, and steps the clock only if it is more than 50 ms off. <code>-Install</code> adds a scheduled task that repeats every 15 minutes. Remove it with <code>-Uninstall</code>. The script is in <a href="https://github.com/ArthWarrior3201/FastFlare/blob/main/tools/windows-sync.ps1"><code>tools/windows-sync.ps1</code></a>. The repo's <code>render.yaml</code> deploys the web side to Render in one step.</p>
+  <div class="note">This is less precise than real NTP (tens of milliseconds, not a few) because HTTP round trips are noisy, and free hosts sleep when idle so the first request can be slow. It is good enough to keep a PC's clock correct.</div>
+
   <h2>Configuration</h2>
   <table>
     <tr><th>Variable</th><th>Default</th><th>Meaning</th></tr>
