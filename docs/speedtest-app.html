@@ -183,9 +183,9 @@
     }).then(function (r) {
       $('dl').textContent = r.download.mbps.toFixed(1); $('ul').textContent = r.upload.mbps.toFixed(1);
       $('lat').textContent = r.latency.median.toFixed(1); $('jit').textContent = r.latency.jitter.toFixed(1);
-      $('dls').textContent = '90th percentile of ' + r.download.stages.length + ' stages';
-      $('uls').textContent = '90th percentile of ' + r.upload.stages.length + ' stages';
-      $('lats').textContent = 'min ' + r.latency.min.toFixed(1) + ' · p90 ' + r.latency.p90.toFixed(1) + ' · max ' + r.latency.max.toFixed(1);
+      $('dls').textContent = 'under load: ' + r.download.loadedLatency.median.toFixed(0) + ' ms latency · ' + r.download.streams + ' connections';
+      $('uls').textContent = 'under load: ' + r.upload.loadedLatency.median.toFixed(0) + ' ms latency · ' + r.upload.streams + ' connections';
+      $('lats').textContent = 'idle · min ' + r.latency.min.toFixed(1) + ' · p90 ' + r.latency.p90.toFixed(1) + ' · max ' + r.latency.max.toFixed(1);
       $('jits').textContent = 'packet loss ' + (r.latency.loss * 100).toFixed(0) + '%';
       pingChart(r.latency.samples, r.latency); histChart(r.latency.samples);
       status('Done: ' + r.server.provider + ', ' + r.server.city + ' in ' + (r.durationMs / 1000).toFixed(1) + ' s.');

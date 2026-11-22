@@ -132,7 +132,8 @@ export async function createApp(overrides = {}) {
       // --- Service 2: speed test -----------------------------------------------------------
       if (p === '/speed/ping') return speed.ping(req, res);
       if (p === '/speed/down' && req.method === 'GET') return speed.down(req, res, url);
-      if (p === '/speed/up' && req.method === 'POST') return speed.up(req, res);
+      if (p === '/speed/up' && req.method === 'POST') return speed.up(req, res, url);
+      if (p === '/speed/upstats' && req.method === 'GET') return speed.upstats(req, res, url);
       if (p === '/speed/servers') return speed.list(req, res);
       if (p === '/speed/info') return speed.info(req, res);
 
@@ -182,6 +183,7 @@ export async function createApp(overrides = {}) {
   async function stop() {
     envtime.stop();
     captcha.close();
+    speed.close?.();
     ntp?.close();
     await new Promise((r) => server.close(r));
     server.closeAllConnections?.();

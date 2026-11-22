@@ -185,11 +185,13 @@
       interacted: function () { return s.pm >= 3 || s.kd >= 1 || s.tc >= 1 || s.sc >= 1; },
       // Enough real pointer movement for the server to judge the path.
       traceReady: function () { return trace.length >= 15 && trace[trace.length - 1][2] - trace[0][2] >= 300; },
-      trace: function () {
-        var base = trace.length ? trace[0][2] : 0;
-        return trace.map(function (p) { return [p[0], p[1], Math.round((p[2] - base) * 10) / 10]; });
+      // Points recorded since `since` (performance.now() time), with times made relative.
+      trace: function (since) {
+        var pts2 = trace.filter(function (p) { return since == null || p[2] >= since; });
+        var base = pts2.length ? pts2[0][2] : 0;
+        return pts2.map(function (p) { return [p[0], p[1], Math.round((p[2] - base) * 10) / 10]; });
       },
-      snapshot: function () {
+      snapshot: function (dt) {
         // Largest sideways deviation of the recorded pointer path from the straight line start->end.
         // Scripted mouse moves are perfectly straight; human ones are not.
         var pv = 0;
@@ -208,7 +210,7 @@
           hc: nav.hardwareConcurrency || 0,
           pm: s.pm, kd: s.kd, tc: s.tc, sc: s.sc, fc: s.fc,
           pv: Math.round(pv * 10) / 10,
-          dt: Date.now() - t0,
+          dt: dt == null ? Date.now() - t0 : dt,
         };
       },
       stop: function () {
@@ -231,17 +233,27 @@
 
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-  // Runs the full flow and resolves { token, expires }. hooks.puzzle(puzzle) must resolve { x, trace, keys }.
-  function run(opts, hooks) {
+  // Step 1 (can run in the background): get a challenge and solve its proof-of-work.
+  function prepare(opts) {
+    var startedWall = Date.now();
+    return post(opts.api, '/captcha/challenge', { sitekey: opts.sitekey }).then(function (r) {
+      var p = { challenge: r.challenge, at: performance.now(), wall: Date.now(), started: startedWall };
+      return solvePow(r.challenge).then(function (nonce) { p.nonce = nonce; return p; });
+    });
+  }
+
+  // Step 2: send the proof with the behaviour evidence, and handle a puzzle if one is asked for.
+  // hooks.puzzle(puzzle) must resolve { x, trace, keys }.
+  function submit(opts, hooks, sig, p) {
     hooks = hooks || {};
-    var sig = Signals();
     var settle = opts.settle == null ? 3000 : opts.settle;
-    function waitForPointer() {
+    function ready() {
       return new Promise(function (resolve) {
         var t0 = Date.now();
         (function poll() {
-          if (sig.traceReady() || Date.now() - t0 >= settle) return resolve();
-          setTimeout(poll, 100);
+          var since = Date.now() - p.wall;
+          if (since >= 300 && (sig.traceReady() || Date.now() - t0 >= settle)) return resolve();
+          setTimeout(poll, 50);
         })();
       });
     }
@@ -255,16 +267,21 @@
       }
       throw new Error('failed');
     }
-    return post(opts.api, '/captcha/challenge', { sitekey: opts.sitekey })
-      .then(function (r) {
-        var challenge = r.challenge;
-        return Promise.all([solvePow(challenge), waitForPointer()]).then(function (x) {
-          return post(opts.api, '/captcha/verify', {
-            sitekey: opts.sitekey, challenge: challenge, nonce: x[0], signals: sig.snapshot(), trace: sig.trace(), hp: opts.hp || '',
-          });
-        });
-      })
-      .then(handle)
+    return ready().then(function () {
+      // Only report what happened after the challenge was issued (minus a little slack), so the
+      // server can check the claims against the time it actually observed.
+      return post(opts.api, '/captcha/verify', {
+        sitekey: opts.sitekey, challenge: p.challenge, nonce: p.nonce,
+        signals: sig.snapshot(Date.now() - p.started), trace: sig.trace(p.at - 2500), hp: opts.hp || '',
+      });
+    }).then(handle);
+  }
+
+  // Full flow in one go (auto mode and execute()).
+  function run(opts, hooks) {
+    var sig = Signals();
+    return prepare(opts)
+      .then(function (p) { return submit(opts, hooks, sig, p); })
       .then(function (r) { sig.stop(); return r; }, function (e) { sig.stop(); throw e; });
   }
 
@@ -398,12 +415,22 @@
   var scriptSrc = (typeof document !== 'undefined' && document.currentScript && document.currentScript.src) || '';
   var defaultApi = scriptSrc ? new URL(scriptSrc).origin : '';
   var STYLE =
-    '.ff-w{display:inline-flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;font:14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;' +
-    'border:1px solid var(--ffb);background:var(--ffbg);color:var(--fft);min-width:220px;box-sizing:border-box}' +
-    '.ff-w[data-theme=light],.ff-pzh[data-theme=light]{--ffb:#d7dbe6;--ffbg:#fff;--fft:#1b2030;--ffm:#6b7280}' +
-    '.ff-w[data-theme=dark],.ff-pzh[data-theme=dark]{--ffb:#2c3350;--ffbg:#12162a;--fft:#e8ebf7;--ffm:#8b93b5}' +
+    '.ff-w{position:relative;display:inline-flex;align-items:center;gap:12px;padding:12px 14px;border-radius:14px;font:15px/1.25 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;' +
+    'border:1px solid var(--ffb);background:var(--ffbg);color:var(--fft);width:304px;max-width:100%;min-height:68px;box-sizing:border-box;box-shadow:0 1px 2px rgba(0,0,0,.08),0 8px 24px var(--ffsh)}' +
+    '.ff-w[data-theme=light],.ff-pzh[data-theme=light]{--ffb:#d7dbe6;--ffbg:#fff;--fft:#1b2030;--ffm:#6b7280;--ffbox:#9aa1b5;--ffsh:rgba(20,24,60,.06)}' +
+    '.ff-w[data-theme=dark],.ff-pzh[data-theme=dark]{--ffb:#2c3350;--ffbg:#12162a;--fft:#e8ebf7;--ffm:#8b93b5;--ffbox:#4b537a;--ffsh:rgba(0,0,0,.35)}' +
+    '.ff-cb{flex:none;width:30px;height:30px;border-radius:8px;border:2px solid var(--ffbox);background:transparent;padding:0;cursor:pointer;display:grid;place-items:center;transition:border-color .15s,background .2s,transform .1s}' +
+    '.ff-cb:hover{border-color:#ff8a3d}.ff-cb:active{transform:scale(.94)}.ff-cb:focus-visible{outline:2px solid #7c5cff;outline-offset:3px}.ff-cb:disabled{cursor:default}' +
+    '.ff-cb svg{width:18px;height:18px;opacity:0;transform:scale(.6);transition:opacity .2s,transform .25s cubic-bezier(.2,1.6,.4,1)}' +
+    '.ff-w[data-state=solving] .ff-cb{border-color:#ff8a3d;border-top-color:transparent;border-radius:50%;animation:ffs .8s linear infinite}' +
+    '.ff-w[data-state=ok] .ff-cb{background:#22b573;border-color:#22b573}.ff-w[data-state=ok] .ff-cb svg{opacity:1;transform:none}' +
+    '.ff-w[data-state=puzzle] .ff-cb{border-color:#f5b942}.ff-w[data-state=error] .ff-cb{border-color:#e5484d}' +
+    '.ff-t{flex:1;min-width:0;cursor:pointer;user-select:none}.ff-w[data-state=solving] .ff-t,.ff-w[data-state=ok] .ff-t{cursor:default}' +
+    '.ff-sub{display:block;font-size:12px;color:var(--ffm);margin-top:2px}' +
+    '.ff-b{flex:none;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10px;font-weight:700;letter-spacing:.03em;color:var(--ffm);text-decoration:none}' +
+    '.ff-b svg{width:24px;height:24px}' +
     '.ff-pzh{color:var(--fft);font:14px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}' +
-    '.ff-pz{margin-top:10px;width:300px;max-width:100%}.ff-pz-t{font-size:13px;margin-bottom:8px}' +
+    '.ff-pz{margin-top:10px;width:304px;max-width:100%}.ff-pz-t{font-size:13px;margin-bottom:8px}' +
     '.ff-pz-s{position:relative;border-radius:10px;overflow:hidden;line-height:0;border:1px solid var(--ffb)}' +
     '.ff-pz-s img{width:100%;height:auto;display:block;user-select:none;-webkit-user-drag:none}' +
     '.ff-pz-p{position:absolute;left:0;height:auto;cursor:grab;touch-action:none;filter:drop-shadow(0 2px 5px rgba(0,0,0,.6))}' +
@@ -412,12 +439,14 @@
     '.ff-pz-k:focus-visible{outline:2px solid #7c5cff;outline-offset:2px}.ff-pz-h{font-size:11px;color:var(--ffm)}' +
     '.ff-ov{position:fixed;inset:0;z-index:2147483646;background:rgba(5,7,20,.6);display:grid;place-items:center;padding:16px}' +
     '.ff-pnl{background:var(--ffbg);border:1px solid var(--ffb);border-radius:16px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.5)}' +
-    '.ff-i{width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:13px;color:#fff;background:#8b93b5}' +
-    '.ff-w[data-state=solving] .ff-i{background:none;border:2px solid #ff8a3d;border-top-color:transparent;animation:ffs .8s linear infinite;box-sizing:border-box}' +
-    '.ff-w[data-state=ok] .ff-i{background:#22b573}.ff-w[data-state=puzzle] .ff-i{background:#f5b942}.ff-w[data-state=error] .ff-i{background:#e5484d}' +
-    '.ff-b{margin-left:auto;font-size:11px;color:var(--ffm);letter-spacing:.02em}' +
     '.ff-r{background:none;border:0;color:#ff8a3d;cursor:pointer;font:inherit;text-decoration:underline;padding:0}' +
-    '@keyframes ffs{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.ff-i{animation:none!important}}';
+    '@keyframes ffs{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.ff-cb{animation:none!important}}';
+
+  var FLAME =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="ffg" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff4d8d"/><stop offset="1" stop-color="#ff8a3d"/></linearGradient></defs>' +
+    '<path fill="url(#ffg)" d="M12 2c1 3.2-.6 5-2.2 6.8C8.3 10.4 7 12 7 14.6 7 17.6 9.3 20 12 20s5-2.4 5-5.4c0-2-1-3.6-2.1-4.6.1 1.6-.6 2.8-1.6 3.2.4-3.6-.6-7.4-1.3-11.2z"/>' +
+    '<path fill="#fff" fill-opacity=".85" d="M12 20c-1.5 0-2.7-1.3-2.7-2.9 0-1.4.8-2.2 1.6-3 .5 1 1.3 1.4 2 1.2.9 1.1 1.8 1.7 1.8 2.6C14.7 18.7 13.5 20 12 20z"/></svg>';
+  var CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 
   function injectStyle() {
     if (document.getElementById('ff-style')) return;
@@ -434,28 +463,38 @@
     if (!el) throw new Error('FastFlare: element not found');
     if (el.__ff) return el.__ff;
     injectStyle();
+    var o = options || {};
     var d = el.dataset || {};
     var opts = {
-      sitekey: (options && options.sitekey) || d.sitekey,
-      api: ((options && options.api) || d.api || defaultApi).replace(/\/$/, ''),
-      theme: (options && options.theme) || d.theme || 'auto',
-      callback: (options && options.callback) || (d.callback && global[d.callback]),
-      expired: (options && options.expiredCallback) || (d.expiredCallback && global[d.expiredCallback]),
-      error: (options && options.errorCallback) || (d.errorCallback && global[d.errorCallback]),
-      field: (options && options.field) || d.field || 'ff-token',
-      settle: options && options.settle != null ? options.settle : d.settle != null ? +d.settle : undefined,
+      sitekey: o.sitekey || d.sitekey,
+      api: (o.api || d.api || defaultApi).replace(/\/$/, ''),
+      theme: o.theme || d.theme || 'auto',
+      mode: o.mode || d.mode || 'checkbox',
+      callback: o.callback || (d.callback && global[d.callback]),
+      expired: o.expiredCallback || (d.expiredCallback && global[d.expiredCallback]),
+      error: o.errorCallback || (d.errorCallback && global[d.errorCallback]),
+      field: o.field || d.field || 'ff-token',
+      settle: o.settle != null ? o.settle : d.settle != null ? +d.settle : undefined,
     };
     if (!opts.sitekey) throw new Error('FastFlare: data-sitekey is required');
+    var checkbox = opts.mode !== 'auto';
+    if (checkbox && opts.settle == null) opts.settle = 500; // the click itself is the sign of life
 
     var theme = opts.theme === 'auto' ? (global.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : opts.theme;
     var box = document.createElement('div');
     box.className = 'ff-w';
-    box.setAttribute('role', 'status');
-    box.setAttribute('aria-live', 'polite');
     box.dataset.theme = theme;
-    box.innerHTML = '<span class="ff-i" aria-hidden="true"></span><span class="ff-t"></span><span class="ff-b">FastFlare</span>';
-    var icon = box.querySelector('.ff-i');
-    var text = box.querySelector('.ff-t');
+    box.innerHTML =
+      '<button type="button" class="ff-cb" role="checkbox" aria-checked="false">' + CHECK + '</button>' +
+      '<span class="ff-t"><span class="ff-l"></span><span class="ff-sub" aria-live="polite"></span></span>' +
+      '<a class="ff-b" href="https://github.com/ArthWarrior3201/FastFlare" target="_blank" rel="noopener" title="Protected by FastFlare">' + FLAME + 'FastFlare</a>';
+    var cb = box.querySelector('.ff-cb');
+    var label = box.querySelector('.ff-l');
+    var sub = box.querySelector('.ff-sub');
+    var labelId = 'ff-l-' + Math.random().toString(36).slice(2, 9);
+    label.id = labelId;
+    cb.setAttribute('aria-labelledby', labelId);
+
     var input = document.createElement('input');
     input.type = 'hidden';
     input.name = opts.field;
@@ -476,67 +515,117 @@
     el.appendChild(hp);
 
     var timer = null;
-    var api = {
-      token: function () { return input.value || null; },
-      reset: function () { clearTimeout(timer); input.value = ''; start(); },
-      execute: function () { return api.token() ? Promise.resolve(api.token()) : start(); },
+    var busy = false;
+    var sig = null;
+    var prep = null;
+    var prepWall = 0;
+
+    function setState(state, main, detail) {
+      box.dataset.state = state;
+      label.textContent = main;
+      sub.textContent = detail || '';
+      cb.setAttribute('aria-checked', state === 'ok' ? 'true' : 'false');
+      cb.disabled = state === 'solving' || state === 'ok' || state === 'puzzle';
+    }
+    function idle(detail) {
+      setState('idle', "I'm not a robot", detail);
+      if (!sig) sig = Signals();
+    }
+    // Fetch and solve the proof-of-work in the background so the click feels instant.
+    function warm() {
+      if (prep && Date.now() - prepWall < 90000) return prep;
+      prepWall = Date.now();
+      prep = prepare({ sitekey: opts.sitekey, api: opts.api });
+      prep.catch(function () { prep = null; });
+      return prep;
+    }
+
+    var hooks = {
+      puzzle: function (pz) {
+        setState('puzzle', 'One quick check', 'Solve the puzzle below');
+        return puzzleUI(pzHost, pz).then(function (a) { setState('solving', 'Checking…'); return a; });
+      },
     };
 
-    function setState(state, msg) {
-      box.dataset.state = state;
-      text.textContent = msg;
-      icon.textContent = state === 'ok' ? '✓' : state === 'error' ? '!' : state === 'puzzle' ? '?' : '';
+    function succeed(r) {
+      busy = false;
+      if (sig) { sig.stop(); sig = null; }
+      input.value = r.token;
+      setState('ok', 'Verified', r.method === 'puzzle' ? 'Thanks, you passed the check' : 'You are human');
+      if (opts.callback) opts.callback(r.token);
+      el.dispatchEvent(new CustomEvent('ff-verified', { detail: { token: r.token }, bubbles: true }));
+      // Tokens last 2 minutes; expire a little early so a form never submits a dead one.
+      timer = setTimeout(function () {
+        input.value = '';
+        if (opts.expired) opts.expired();
+        if (checkbox) return idle('Verification expired, check again');
+        setState('idle', 'Verification expired', 'Click anywhere to verify again');
+        if (!sig) sig = Signals();
+        var again = function () {
+          document.removeEventListener('pointerdown', again, true);
+          document.removeEventListener('keydown', again, true);
+          if (!input.value && !busy) start().catch(function () {});
+        };
+        document.addEventListener('pointerdown', again, true);
+        document.addEventListener('keydown', again, true);
+      }, 100000);
+      return r.token;
+    }
+    function fail(e) {
+      busy = false;
+      prep = null;
+      pzHost.innerHTML = '';
+      var limited = e && (e.code === 'too_many_failures' || e.code === 'too_many_tokens' || e.code === 'rate_limited');
+      if (checkbox) {
+        idle(limited ? 'Too many attempts from this network, try later' : 'Could not verify, try again');
+        box.dataset.state = 'error';
+      } else {
+        setState('error', 'Verification failed', limited ? 'Too many attempts from this network' : '');
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ff-r';
+        b.textContent = 'Retry';
+        b.onclick = function () { api.reset(); };
+        sub.appendChild(b);
+      }
+      if (opts.error) opts.error(e);
+      throw e;
     }
 
     function start() {
-      setState('solving', 'Verifying you are human…');
+      if (busy) return Promise.reject(new Error('busy'));
+      busy = true;
       pzHost.innerHTML = '';
-      var hooks = {
-        puzzle: function (pz) {
-          setState('puzzle', 'One quick check');
-          return puzzleUI(pzHost, pz).then(function (a) { setState('solving', 'Checking…'); return a; });
-        },
-      };
-      return run({ sitekey: opts.sitekey, api: opts.api, settle: opts.settle, hp: hp.value }, hooks).then(
-        function (r) {
-          input.value = r.token;
-          setState('ok', 'Verified');
-          if (opts.callback) opts.callback(r.token);
-          el.dispatchEvent(new CustomEvent('ff-verified', { detail: { token: r.token }, bubbles: true }));
-          // Tokens last 2 minutes. Renew only when the visitor comes back to the page, so an idle tab
-          // does not keep collecting tokens.
-          timer = setTimeout(function () {
-            input.value = '';
-            if (opts.expired) opts.expired();
-            setState('idle', 'Verification expired. ');
-            var again = function () {
-              document.removeEventListener('pointerdown', again, true);
-              document.removeEventListener('keydown', again, true);
-              if (!input.value && box.dataset.state === 'idle') start().catch(function () {});
-            };
-            document.addEventListener('pointerdown', again, true);
-            document.addEventListener('keydown', again, true);
-          }, 100000);
-          return r.token;
-        },
-        function (e) {
-          pzHost.innerHTML = '';
-          setState('error', e && (e.code === 'too_many_failures' || e.code === 'too_many_tokens') ? 'Too many attempts from this network. Try again later. ' : 'Verification failed. ');
-          var b = document.createElement('button');
-          b.type = 'button';
-          b.className = 'ff-r';
-          b.textContent = 'Retry';
-          b.onclick = function () { api.reset(); };
-          text.appendChild(b);
-          if (opts.error) opts.error(e);
-          throw e;
-        },
-      );
+      setState('solving', 'Verifying…');
+      if (!sig) sig = Signals();
+      var s = sig;
+      var o2 = { sitekey: opts.sitekey, api: opts.api, settle: opts.settle, hp: hp.value };
+      var p = checkbox ? warm() : prepare(o2);
+      prep = null; // one challenge per attempt
+      return p.then(function (pp) { return submit(o2, hooks, s, pp); }).then(succeed, fail);
     }
 
+    function activate() {
+      if (busy || input.value) return;
+      start().catch(function () {});
+    }
+
+    var api = {
+      token: function () { return input.value || null; },
+      reset: function () { clearTimeout(timer); input.value = ''; busy = false; checkbox ? idle() : start().catch(function () {}); },
+      execute: function () { return api.token() ? Promise.resolve(api.token()) : start(); },
+    };
+
+    if (checkbox) {
+      cb.addEventListener('click', activate);
+      label.parentNode.addEventListener('click', function (e) { if (e.target !== cb) activate(); });
+      idle();
+      warm();
+    } else {
+      start().catch(function () {});
+    }
     el.__ff = api;
     instances.push(api);
-    start().catch(function () {});
     return api;
   }
 

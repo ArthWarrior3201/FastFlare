@@ -1,12 +1,23 @@
 /*!
- * FastFlare speed test client. Pick a provider and a city, measure latency, jitter, download and
- * upload against that provider's server in that city.
+ * FastFlare speed test client. Pick a provider and a city, then measure latency, jitter, download,
+ * upload and latency under load against that provider's server in that city.
  *
  *   const st = new FastFlareSpeedTest({ api: 'https://YOUR-FASTFLARE-HOST' });
  *   await st.loadServers();
- *   st.providers();            // ['AWS', 'Hetzner', ...]
- *   st.cities('AWS');          // [{ id, provider, city, country, url }, ...]
- *   const result = await st.run({ serverId: 'aws-frankfurt', onProgress: (p) => console.log(p) });
+ *   st.providers();            // ['AWS', 'Oracle', ...]
+ *   st.cities('Oracle');       // [{ id, provider, city, country, url }, ...]
+ *   const result = await st.run({ serverId: 'oracle-hyderabad', onProgress: (p) => console.log(p) });
+ *
+ * How it stays accurate:
+ *  - Download and upload each run for a fixed time over several parallel connections, with chunk
+ *    sizes that adapt to the line, so fast and slow connections are both measured properly.
+ *  - The first seconds (TCP ramp-up) are ignored; only the steady part counts.
+ *  - Upload speed is measured by the server: it counts bytes as they arrive, so data still sitting in
+ *    buffers on the way is never counted as sent.
+ *  - Upload data is random, so nothing along the way can compress it.
+ *  - Latency uses the browser's own network timing (Resource Timing) where available, so JavaScript
+ *    overhead is not counted, and the first request (connection setup) is discarded.
+ *  - Latency is also sampled during the transfers ("loaded latency"), which shows bufferbloat.
  *
  * Docs: https://arthwarrior3201.github.io/FastFlare/speedtest.html
  */
@@ -14,6 +25,8 @@
   'use strict';
 
   var now = function () { return performance.now(); };
+  var rnd = function () { return Math.random().toString(36).slice(2); };
+  var abortErr = function () { return new DOMException('Aborted', 'AbortError'); };
 
   function percentile(sorted, p) {
     if (!sorted.length) return 0;
@@ -33,13 +46,23 @@
       mean: mean,
       p90: percentile(s, 0.9),
       max: s[s.length - 1] || 0,
-      jitter: samples.length > 1 ? jit / (samples.length - 1) : 0, // mean absolute difference of consecutive pings
+      jitter: samples.length > 1 ? jit / (samples.length - 1) : 0, // mean difference between consecutive pings
       loss: samples.length + lost ? lost / (samples.length + lost) : 0,
       samples: samples,
     };
   }
 
-  var rnd = function () { return Math.random().toString(36).slice(2); };
+  // Random, incompressible upload data, generated once.
+  var RANDOM = null;
+  function randomBlob(bytes) {
+    if (!RANDOM) {
+      RANDOM = new Uint8Array(1 << 20);
+      for (var o = 0; o < RANDOM.length; o += 65536) crypto.getRandomValues(RANDOM.subarray(o, o + 65536));
+    }
+    var parts = [];
+    for (var left = bytes; left > 0; left -= RANDOM.length) parts.push(left >= RANDOM.length ? RANDOM : RANDOM.subarray(0, left));
+    return new Blob(parts);
+  }
 
   function FastFlareSpeedTest(opts) {
     opts = opts || {};
@@ -47,20 +70,11 @@
     this.registry = opts.registry || this.api + '/speed/servers';
     this.servers = [];
     this.pings = opts.pings || 20;
-    this.downloadPlan = opts.downloadPlan || [
-      { bytes: 100e3, count: 8, parallel: 1 },
-      { bytes: 1e6, count: 6, parallel: 1 },
-      { bytes: 10e6, count: 4, parallel: 2 },
-      { bytes: 25e6, count: 3, parallel: 4 },
-      { bytes: 50e6, count: 2, parallel: 4 },
-    ];
-    this.uploadPlan = opts.uploadPlan || [
-      { bytes: 100e3, count: 6, parallel: 1 },
-      { bytes: 1e6, count: 5, parallel: 1 },
-      { bytes: 5e6, count: 4, parallel: 2 },
-      { bytes: 10e6, count: 3, parallel: 3 },
-    ];
-    this.maxStageSeconds = opts.maxStageSeconds || 10; // skip a stage if it is predicted to take longer than this
+    this.duration = opts.duration || 10; // seconds per direction
+    this.warmup = opts.warmup || 2; // seconds ignored at the start of each direction
+    this.downloadStreams = opts.downloadStreams || 4;
+    this.uploadStreams = opts.uploadStreams || 3;
+    try { performance.setResourceTimingBufferSize(2000); } catch (e) {}
   }
 
   FastFlareSpeedTest.prototype.loadServers = function () {
@@ -69,7 +83,6 @@
       .then(function (r) { if (!r.ok) throw new Error('registry ' + r.status); return r.json(); })
       .then(function (j) {
         self.servers = (j.servers || []).map(function (s) {
-          // A server with no public URL is the registry host itself.
           s.url = (s.url || self.api || new URL(self.registry).origin).replace(/\/$/, '');
           return s;
         });
@@ -89,26 +102,34 @@
       .sort(function (a, b) { return a.city.localeCompare(b.city); });
   };
 
+  // One round trip. Prefers the browser's network timing (request sent -> first byte back).
+  function pingOnce(base, signal) {
+    var url = new URL(base + '/speed/ping?r=' + rnd(), location.href).href;
+    var t0 = now();
+    return fetch(url, { cache: 'no-store', signal: signal }).then(function (r) { return r.arrayBuffer(); }).then(function () {
+      var wall = now() - t0;
+      var ms = wall;
+      try {
+        var e = performance.getEntriesByName(url).pop();
+        if (e && e.requestStart > 0 && e.responseStart > e.requestStart) ms = Math.min(wall, e.responseStart - e.requestStart);
+        performance.clearResourceTimings();
+      } catch (err) {}
+      return ms;
+    });
+  }
+
   FastFlareSpeedTest.prototype.latency = function (server, o) {
     o = o || {};
     var self = this;
     var samples = [];
     var lost = 0;
-    var base = server.url;
-    function one(i) {
-      if (o.signal && o.signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
-      var t0 = now();
-      return fetch(base + '/speed/ping?r=' + rnd(), { cache: 'no-store', signal: o.signal })
-        .then(function (r) { return r.arrayBuffer(); })
-        .then(function () { return now() - t0; });
-    }
-    // The first request pays for DNS/TCP/TLS setup; discard it so we measure the path, not the handshake.
-    return one(-1).catch(function () {}).then(function () {
+    // The first request pays for DNS, TCP and TLS setup: discard it.
+    return pingOnce(server.url, o.signal).catch(function (e) { if (e.name === 'AbortError') throw e; }).then(function () {
       var p = Promise.resolve();
       for (var i = 0; i < self.pings; i++) {
         (function (i) {
           p = p.then(function () {
-            return one(i).then(
+            return pingOnce(server.url, o.signal).then(
               function (ms) { samples.push(ms); if (o.onSample) o.onSample(ms, i, samples); },
               function (e) { if (e && e.name === 'AbortError') throw e; lost++; },
             );
@@ -119,129 +140,176 @@
     });
   };
 
-  // Runs one stage of a plan: `count` transfers, `parallel` at a time. Each transfer reports bytes
-  // as they move so we can draw a live throughput line.
-  function runStage(stage, doTransfer, tracker, latencyMs, signal) {
-    var perReq = [];
-    var left = stage.count;
-    var t0 = now();
-    var total = 0;
-    function worker() {
-      if (left <= 0 || (signal && signal.aborted)) return Promise.resolve();
-      left--;
-      return doTransfer(stage.bytes, tracker).then(function (r) {
-        perReq.push(r);
-        total += r.bytes;
-        return worker();
-      });
-    }
-    var ws = [];
-    for (var i = 0; i < stage.parallel; i++) ws.push(worker());
-    return Promise.all(ws).then(function () {
-      var wall = now() - t0;
-      // Subtract one round trip (request + first byte) so latency does not masquerade as slowness.
-      var usable = Math.max(wall - latencyMs, wall * 0.5, 1);
-      return { bytes: stage.bytes, count: stage.count, parallel: stage.parallel, totalBytes: total, ms: wall, mbps: (total * 8) / (usable / 1000) / 1e6 };
-    });
-  }
-
-  function Tracker(onProgress, phase) {
-    var t0 = now();
-    var events = []; // [t, bytes]
-    var series = [];
-    var lastEmit = 0;
-    return {
-      series: series,
-      add: function (bytes) {
-        var t = now();
-        events.push([t, bytes]);
-        if (t - lastEmit < 100) return;
-        lastEmit = t;
-        // Throughput over the trailing 400 ms window.
-        var cut = t - 400, sum = 0;
-        while (events.length && events[0][0] < cut) events.shift();
-        events.forEach(function (e) { sum += e[1]; });
-        var span = Math.min(400, t - t0) || 1;
-        var mbps = (sum * 8) / (span / 1000) / 1e6;
-        var pt = { t: (t - t0) / 1000, mbps: mbps };
-        series.push(pt);
-        if (onProgress) onProgress({ phase: phase, mbps: mbps, t: pt.t, series: series });
-      },
-    };
-  }
-
-  FastFlareSpeedTest.prototype._transfers = function (plan, doTransfer, tracker, latencyMs, o) {
+  // Runs one direction for a fixed time over parallel streams.
+  FastFlareSpeedTest.prototype._direction = function (kind, server, o) {
     var self = this;
-    var stages = [];
-    var chain = Promise.resolve();
-    var lastMbps = null;
-    plan.forEach(function (stage) {
-      chain = chain.then(function () {
-        if (o.signal && o.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-        if (lastMbps !== null) {
-          var predicted = (stage.bytes * stage.count * 8) / (lastMbps * 1e6);
-          if (predicted > self.maxStageSeconds) return; // too slow to bother: we already know the answer
-        }
-        return runStage(stage, doTransfer, tracker, latencyMs, o.signal).then(function (r) {
-          stages.push(r);
-          lastMbps = r.mbps;
-        });
-      });
-    });
-    return chain.then(function () {
-      var big = stages.filter(function (s) { return s.bytes >= 1e6; });
-      var pool = (big.length ? big : stages).map(function (s) { return s.mbps; }).sort(function (a, b) { return a - b; });
-      return { mbps: percentile(pool, 0.9), stages: stages, series: tracker.series };
-    });
-  };
+    var phase = kind === 'down' ? 'download' : 'upload';
+    var DUR = self.duration * 1000;
+    var WARM = self.warmup * 1000;
+    var streams = kind === 'down' ? self.downloadStreams : self.uploadStreams;
+    var maxChunk = kind === 'down' ? 50e6 : 25e6;
+    var ctrl = new AbortController();
+    var onOuterAbort = function () { ctrl.abort(); };
+    if (o.signal) {
+      if (o.signal.aborted) return Promise.reject(abortErr());
+      o.signal.addEventListener('abort', onOuterAbort, { once: true });
+    }
 
-  FastFlareSpeedTest.prototype.download = function (server, latencyMs, o) {
-    o = o || {};
-    var tracker = Tracker(o.onProgress, 'download');
-    function transfer(bytes, tr) {
-      var t0 = now();
-      return fetch(server.url + '/speed/down?bytes=' + bytes + '&r=' + rnd(), { cache: 'no-store', signal: o.signal }).then(function (r) {
+    var t0 = now();
+    var tEnd = t0 + DUR;
+    var chunk = kind === 'down' ? 1e6 : 512e3;
+    var recent = []; // [t, bytes] for the live graph
+    var flowBytes = 0; // bytes seen arriving / leaving inside the measured window
+    var done = []; // [completedAt, bytes] of finished requests (upload: confirmed by the server)
+    var series = [];
+    var loaded = [];
+    var requests = 0;
+    var sid = kind === 'up' ? rnd().replace(/[^a-z0-9]/g, '').slice(0, 12) + 'x0000' : '';
+
+    function flow(bytes) {
+      var t = now();
+      recent.push([t, bytes]);
+      if (t >= t0 + WARM && t <= tEnd) flowBytes += bytes;
+    }
+
+    var sampler = setInterval(function () {
+      var t = now();
+      var cut = t - 1000;
+      while (recent.length && recent[0][0] < cut) recent.shift();
+      var sum = 0;
+      recent.forEach(function (e) { sum += e[1]; });
+      var span = Math.min(1000, t - t0) || 1;
+      var pt = { t: (t - t0) / 1000, mbps: (sum * 8) / (span / 1000) / 1e6 };
+      series.push(pt);
+      if (o.onProgress) o.onProgress({ phase: phase, mbps: pt.mbps, t: pt.t, series: series, progress: Math.min(1, (t - t0) / DUR) });
+    }, 200);
+
+    // Latency under load, sampled while the line is busy.
+    var pinging = true;
+    (function pingLoop() {
+      if (!pinging) return;
+      setTimeout(function () {
+        if (!pinging) return;
+        if (now() - t0 < WARM) return pingLoop();
+        pingOnce(server.url, ctrl.signal).then(function (ms) { if (pinging) loaded.push(ms); }, function () {}).then(pingLoop);
+      }, 400);
+    })();
+
+    function download(bytes) {
+      return fetch(server.url + '/speed/down?bytes=' + Math.round(bytes) + '&r=' + rnd(), { cache: 'no-store', signal: ctrl.signal }).then(function (r) {
+        if (!r.ok) throw new Error('download HTTP ' + r.status);
         var reader = r.body.getReader();
         var got = 0;
         return (function pump() {
           return reader.read().then(function (x) {
-            if (x.done) return { bytes: got, ms: now() - t0 };
+            if (x.done) return got;
             got += x.value.byteLength;
-            tr.add(x.value.byteLength);
+            flow(x.value.byteLength);
             return pump();
           });
         })();
       });
     }
-    return this._transfers(this.downloadPlan, transfer, tracker, latencyMs, o);
-  };
 
-  FastFlareSpeedTest.prototype.upload = function (server, latencyMs, o) {
-    o = o || {};
-    var tracker = Tracker(o.onProgress, 'upload');
-    var cache = {};
-    function transfer(bytes, tr) {
+    function upload(bytes) {
       return new Promise(function (resolve, reject) {
-        var body = cache[bytes] || (cache[bytes] = new Uint8Array(bytes));
         var xhr = new XMLHttpRequest();
-        var t0 = now();
         var sent = 0;
-        xhr.open('POST', server.url + '/speed/up?r=' + rnd());
-        xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-        xhr.upload.onprogress = function (e) { tr.add(e.loaded - sent); sent = e.loaded; };
-        xhr.onload = function () { if (xhr.status === 200) resolve({ bytes: bytes, ms: now() - t0 }); else reject(new Error('upload ' + xhr.status)); };
+        xhr.open('POST', server.url + '/speed/up?sid=' + sid + '&r=' + rnd());
+        xhr.upload.onprogress = function (e) { flow(e.loaded - sent); sent = e.loaded; };
+        xhr.onload = function () {
+          if (xhr.status !== 200) return reject(new Error('upload HTTP ' + xhr.status));
+          var confirmed = bytes;
+          try { confirmed = JSON.parse(xhr.responseText).bytes || bytes; } catch (e) {}
+          resolve(confirmed);
+        };
         xhr.onerror = function () { reject(new Error('upload failed')); };
-        xhr.onabort = function () { reject(new DOMException('Aborted', 'AbortError')); };
-        if (o.signal) o.signal.addEventListener('abort', function () { xhr.abort(); }, { once: true });
-        xhr.send(body);
+        xhr.onabort = function () { reject(abortErr()); };
+        ctrl.signal.addEventListener('abort', function () { xhr.abort(); }, { once: true });
+        xhr.send(randomBlob(Math.round(bytes)));
       });
     }
-    return this._transfers(this.uploadPlan, transfer, tracker, latencyMs, o);
+
+    function stream() {
+      if (now() >= tEnd || ctrl.signal.aborted) return Promise.resolve();
+      var size = chunk;
+      var t1 = now();
+      requests++;
+      return (kind === 'down' ? download(size) : upload(size)).then(
+        function (bytes) {
+          var t2 = now();
+          done.push([t2, bytes]);
+          // Aim for requests of about 0.75 s each at the speed this one achieved.
+          var rate = bytes / Math.max((t2 - t1) / 1000, 0.02);
+          chunk = Math.max(100e3, Math.min(maxChunk, rate * 0.75));
+          return stream();
+        },
+        function (e) {
+          if (ctrl.signal.aborted) return;
+          throw e;
+        },
+      );
+    }
+
+    var stopTimer = setTimeout(function () { ctrl.abort(); }, DUR);
+    var all = [];
+    for (var i = 0; i < streams; i++) all.push(stream());
+
+    function cleanup() {
+      clearTimeout(stopTimer);
+      clearInterval(sampler);
+      pinging = false;
+      if (o.signal) o.signal.removeEventListener('abort', onOuterAbort);
+    }
+
+    function finish(mbps, seconds, method) {
+      loaded.sort(function (a, b) { return a - b; });
+      return {
+        mbps: mbps,
+        seconds: seconds,
+        streams: streams,
+        requests: requests,
+        method: method,
+        series: series,
+        loadedLatency: { median: percentile(loaded, 0.5), p90: percentile(loaded, 0.9), samples: loaded },
+      };
+    }
+
+    return Promise.all(all).then(
+      function () {
+        cleanup();
+        if (o.signal && o.signal.aborted) throw abortErr();
+        var seconds = (Math.min(now(), tEnd) - (t0 + WARM)) / 1000;
+        var clientMbps = seconds > 0 ? (flowBytes * 8) / seconds / 1e6 : 0;
+        if (kind === 'down') return finish(clientMbps, seconds, 'received');
+        // Upload: use the server's own count of bytes that arrived, skipping its first WARM seconds
+        // and the last slot (cut off when the test stopped).
+        return fetch(server.url + '/speed/upstats?sid=' + sid, { cache: 'no-store' })
+          .then(function (r) { if (!r.ok) throw new Error('no stats'); return r.json(); })
+          .then(function (st) {
+            var slots = st.slots || [];
+            if (slots.length < 5) throw new Error('too few slots');
+            var firstSlot = slots[0][0];
+            var lastSlot = slots[slots.length - 1][0];
+            var from = firstSlot + Math.round(WARM / st.slotMs);
+            var bytes = 0;
+            slots.forEach(function (x) { if (x[0] >= from && x[0] < lastSlot) bytes += x[1]; });
+            var secs = ((lastSlot - from) * st.slotMs) / 1000;
+            if (secs <= 0.5) throw new Error('window too short');
+            return finish((bytes * 8) / secs / 1e6, secs, 'server-measured');
+          })
+          .catch(function () { return finish(clientMbps, seconds, 'browser-estimate'); });
+      },
+      function (e) { cleanup(); ctrl.abort(); throw e; },
+    );
   };
 
+  FastFlareSpeedTest.prototype.download = function (server, o) { return this._direction('down', server, o || {}); };
+  FastFlareSpeedTest.prototype.upload = function (server, o) { return this._direction('up', server, o || {}); };
+
   /**
-   * Full run: latency/jitter -> download -> upload.
-   * options: { serverId | server, signal, onPhase(phase), onProgress({phase, mbps, t, series}), onPing(ms, i, samples) }
+   * Full run: latency and jitter -> download -> upload.
+   * options: { serverId | server, signal, onPhase(phase), onProgress({phase, mbps, t, series, progress}), onPing(ms, i, samples) }
    */
   FastFlareSpeedTest.prototype.run = function (o) {
     var self = this;
@@ -255,12 +323,12 @@
       .then(function (lat) {
         result.latency = lat;
         if (o.onPhase) o.onPhase('download');
-        return self.download(server, lat.median, o);
+        return self.download(server, o);
       })
       .then(function (dl) {
         result.download = dl;
         if (o.onPhase) o.onPhase('upload');
-        return self.upload(server, result.latency.median, o);
+        return self.upload(server, o);
       })
       .then(function (ul) {
         result.upload = ul;

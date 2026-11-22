@@ -76,7 +76,8 @@ $('start').onclick = async () =&gt; {
     <tr><td><code>api</code></td><td>(required)</td><td>URL of the registry node.</td></tr>
     <tr><td><code>registry</code></td><td><code>api + '/speed/servers'</code></td><td>Full URL of the server list, if you host it elsewhere.</td></tr>
     <tr><td><code>pings</code></td><td>20</td><td>Number of latency samples.</td></tr>
-    <tr><td><code>downloadPlan</code>, <code>uploadPlan</code></td><td>staged 100 KB to 50 MB</td><td>Arrays of <code>{bytes, count, parallel}</code> stages. Stages that would take over <code>maxStageSeconds</code> (10) are skipped on slow links.</td></tr>
+    <tr><td><code>duration</code>, <code>warmup</code></td><td>10, 2</td><td>Seconds per direction, and seconds ignored at the start of each.</td></tr>
+    <tr><td><code>downloadStreams</code>, <code>uploadStreams</code></td><td>4, 3</td><td>Parallel connections.</td></tr>
   </table>
   <h3>Methods</h3>
   <table>
@@ -89,18 +90,28 @@ $('start').onclick = async () =&gt; {
 <pre><code>{
   server: { id, provider, city, country, url },
   latency:  { min, median, mean, p90, max, jitter, loss, samples: [ms, ...] },
-  download: { mbps, stages: [{ bytes, count, parallel, mbps, ms }], series: [{ t, mbps }, ...] },
-  upload:   { mbps, stages: [...], series: [...] },
+  download: { mbps, seconds, streams, requests, method, series: [{ t, mbps }, ...], loadedLatency: { median, p90, samples } },
+  upload:   { mbps, seconds, streams, requests, method, series: [...], loadedLatency: {...} },
   startedAt, durationMs
 }</code></pre>
-  <p><code>mbps</code> is the 90th percentile across the 1 MB and larger stages. Each stage subtracts one median round trip so distance doesn't pretend to be a slow line. <code>jitter</code> is the mean absolute difference between consecutive pings. <code>series</code> is throughput over time (about every 100 ms) for drawing graphs; the live page draws it on a canvas.</p>
+
+  <h3>How the numbers are measured</h3>
+  <ul>
+    <li><strong>Latency and jitter:</strong> 20 pings after one discarded connection-setup ping. Each ping uses the browser's own network timing (request sent to first byte back), so script overhead is not included. Jitter is the average difference between consecutive pings.</li>
+    <li><strong>Download:</strong> 10 seconds over 4 parallel connections, with request sizes that adapt to the line. The first 2 seconds (connection ramp-up) are ignored; the result is the steady-state rate.</li>
+    <li><strong>Upload:</strong> 10 seconds over 3 connections of random (incompressible) data. The <em>server</em> counts bytes as they arrive, so data still sitting in buffers is never counted as sent (<code>method: "server-measured"</code>).</li>
+    <li><strong>Loaded latency:</strong> pings sent during each transfer. A big jump over idle latency means bufferbloat, which causes lag in calls and games while something downloads.</li>
+  </ul>
+  <p>Tested against connections with known speed and delay (3 to 100 Mbps, 10 to 120 ms): results were within about 3% for speed and within about 4 ms for latency.</p>
+  <div class="note">A test can only measure up to the server's own connection. Oracle's free <code>VM.Standard.E2.1.Micro</code> is limited to roughly 50 Mbps to the internet, so faster lines will read about 50 against it. Use a larger server for gigabit testing.</div>
 
   <h2>Server endpoints</h2>
   <table>
     <tr><td><code>GET /speed/servers</code></td><td>The provider/city registry.</td></tr>
     <tr><td><code>GET /speed/ping</code></td><td>Empty reply, for latency.</td></tr>
     <tr><td><code>GET /speed/down?bytes=N</code></td><td>Streams N random bytes.</td></tr>
-    <tr><td><code>POST /speed/up</code></td><td>Consumes the body, returns <code>{bytes, ms}</code>.</td></tr>
+    <tr><td><code>POST /speed/up?sid=ID</code></td><td>Consumes the body, returns <code>{bytes, ms}</code>, and records arrival times for session <code>ID</code>.</td></tr>
+    <tr><td><code>GET /speed/upstats?sid=ID</code></td><td>Bytes the server received per 100 ms for that upload session.</td></tr>
     <tr><td><code>GET /speed/info</code></td><td>This node's description and the caller's IP.</td></tr>
   </table>
 </main>

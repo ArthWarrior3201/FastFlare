@@ -5,7 +5,20 @@ import { CORS, httpError, send, clientIp } from './util.js';
 // accident even if a proxy tries to gzip it.
 const BLOCK = crypto.randomBytes(64 * 1024);
 
+// Upload is measured where it lands: the server records how many bytes it received in each 100 ms
+// slot, per test session, so data sitting in buffers on the way never counts as "sent".
+const SLOT_MS = 100;
+const SESSION_TTL = 120_000;
+
 export function createSpeedtest({ node, servers, maxBytes, trustProxy }) {
+  const sessions = new Map(); // sid -> { start, slots: Map(slot -> bytes), touched }
+  const sweep = setInterval(() => {
+    const t = Date.now();
+    for (const [k, v] of sessions) if (t - v.touched > SESSION_TTL) sessions.delete(k);
+  }, 30_000);
+  sweep.unref();
+  const validSid = (sid) => typeof sid === 'string' && /^[a-z0-9]{6,32}$/.test(sid);
+
   function registry() {
     const self = {
       id: node.id,
@@ -56,12 +69,24 @@ export function createSpeedtest({ node, servers, maxBytes, trustProxy }) {
     pump();
   }
 
-  function up(req, res) {
+  function up(req, res, url) {
     const started = process.hrtime.bigint();
     let received = 0;
     let aborted = false;
+    const sid = url && url.searchParams.get('sid');
+    let session = null;
+    if (validSid(sid)) {
+      session = sessions.get(sid);
+      if (!session && sessions.size < 2000) sessions.set(sid, (session = { start: Date.now(), slots: new Map(), touched: Date.now() }));
+    }
     req.on('data', (c) => {
       received += c.length;
+      if (session) {
+        const t = Date.now();
+        const slot = Math.floor((t - session.start) / SLOT_MS);
+        session.slots.set(slot, (session.slots.get(slot) || 0) + c.length);
+        session.touched = t;
+      }
       if (received > maxBytes && !aborted) {
         aborted = true;
         send(res, 413, { error: 'payload_too_large' }, CORS);
@@ -76,6 +101,15 @@ export function createSpeedtest({ node, servers, maxBytes, trustProxy }) {
     req.on('error', () => {});
   }
 
+  function upstats(req, res, url) {
+    const sid = url.searchParams.get('sid');
+    const session = validSid(sid) ? sessions.get(sid) : null;
+    if (!session) throw httpError(404, 'unknown_session');
+    sessions.delete(sid);
+    const slots = [...session.slots.entries()].sort((a, b) => a[0] - b[0]);
+    send(res, 200, { slotMs: SLOT_MS, slots }, CORS);
+  }
+
   function info(req, res) {
     send(res, 200, { node: registry()[0], ip: clientIp(req, trustProxy), maxBytes }, CORS);
   }
@@ -84,5 +118,5 @@ export function createSpeedtest({ node, servers, maxBytes, trustProxy }) {
     send(res, 200, { servers: registry() }, CORS);
   }
 
-  return { ping, down, up, info, list, registry };
+  return { ping, down, up, upstats, info, list, registry, close: () => clearInterval(sweep) };
 }

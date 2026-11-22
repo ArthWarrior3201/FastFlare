@@ -52,18 +52,19 @@
   &lt;div class="ff-captcha" data-sitekey="ff_site_3f9a1c"&gt;&lt;/div&gt;
   &lt;button&gt;Sign up&lt;/button&gt;
 &lt;/form&gt;</code></pre>
-  <p>The widget adds a hidden field named <code>ff-token</code> to the form and keeps it fresh (tokens last two minutes, and the widget renews them). Because the script is loaded from your own FastFlare host, it knows where to talk to automatically. If you host <code>fastflare.js</code> elsewhere, add <code>data-api="https://YOUR-FASTFLARE-HOST"</code>.</p>
+  <p>This shows an <strong>"I'm not a robot"</strong> box. While the page loads, the widget quietly prepares the proof-of-work, so when the visitor clicks, verification takes a moment. People who look human are verified on the spot; anyone FastFlare is unsure about gets the quick shape puzzle. The widget adds a hidden field named <code>ff-token</code> to the form. Tokens last two minutes; after that the box unchecks itself and the visitor clicks it again. Because the script is loaded from your own FastFlare host, it knows where to talk to automatically. If you host <code>fastflare.js</code> elsewhere, add <code>data-api="https://YOUR-FASTFLARE-HOST"</code>.</p>
 
   <h3>Options (data attributes or JS)</h3>
   <table>
     <tr><th>Attribute</th><th>Meaning</th></tr>
     <tr><td><code>data-sitekey</code></td><td>Required. Your site key.</td></tr>
+    <tr><td><code>data-mode</code></td><td><code>checkbox</code> (default): verify when the visitor clicks "I'm not a robot". <code>auto</code>: start verifying as soon as the page loads, no click needed.</td></tr>
     <tr><td><code>data-api</code></td><td>FastFlare server URL. Defaults to the origin <code>fastflare.js</code> was loaded from.</td></tr>
     <tr><td><code>data-callback</code></td><td>Name of a global function called with the token.</td></tr>
     <tr><td><code>data-expired-callback</code>, <code>data-error-callback</code></td><td>Names of global functions.</td></tr>
     <tr><td><code>data-theme</code></td><td><code>light</code>, <code>dark</code> or <code>auto</code> (default).</td></tr>
     <tr><td><code>data-field</code></td><td>Hidden input name (default <code>ff-token</code>).</td></tr>
-    <tr><td><code>data-settle</code></td><td>Longest wait, in milliseconds, for pointer movement before submitting (default 3000). Visitors who do not move get the puzzle.</td></tr>
+    <tr><td><code>data-settle</code></td><td>Longest wait, in milliseconds, for pointer movement before submitting (default 500 after a click, 3000 in auto mode). Visitors who do not move get the puzzle.</td></tr>
   </table>
 
   <h3>Programmatic and invisible use</h3>
