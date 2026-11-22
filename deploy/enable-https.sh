@@ -23,9 +23,20 @@ curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/ap
 apt-get update -y
 apt-get install -y caddy
 
+# HTTP/1.1 lets the browser open several separate connections for the speed test (with HTTP/2 it
+# squeezes every stream into one connection, which under-reads on longer routes). flush_interval -1
+# streams test data immediately instead of buffering it.
 cat > /etc/caddy/Caddyfile <<CADDY
+{
+  servers {
+    protocols h1
+  }
+}
+
 $DOMAIN {
-  reverse_proxy 127.0.0.1:8787
+  reverse_proxy 127.0.0.1:8787 {
+    flush_interval -1
+  }
 }
 CADDY
 

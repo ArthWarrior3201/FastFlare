@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EnvTime setup · FastFlare</title>
+<title>Time Server (NTP) · FastFlare</title>
 <meta name="description" content="Run your own accurate time server and point Windows, macOS or Linux at it. Setup takes about ten minutes.">
 <link rel="stylesheet" href="assets/style.css">
 </head>
@@ -11,30 +11,30 @@
 <header class="nav">
   <a class="brand" href="index.html">Fast<span>Flare</span></a>
   <nav>
-    <a href="captcha.html">CAPTCHA</a>
+    <a href="captcha.html">Bot Protection</a>
     <a href="speedtest.html">Speed Test</a>
-    <a href="envtime.html" aria-current="page">EnvTime</a>
-    <a href="speedtest-app.html">Live speed test</a>
+    <a href="envtime.html" aria-current="page">Time Server (NTP)</a>
+    <a href="speedtest-app.html">Live Speed Test</a>
     <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
   </nav>
 </header>
 <main>
-  <h1>EnvTime <em>setup guide</em></h1>
+  <h1>Time Server <em>(NTP)</em></h1>
   <p class="lead">Your own accurate time server. Point Windows, macOS or Linux at it, or read the time for any time zone from a simple web API. About ten minutes from nothing to synced.</p>
 
   <div class="grid">
     <div class="card"><h3>Precise</h3><p>Combines several of the internet's most trusted time sources and compensates for network delay, so results are typically within a few milliseconds.</p></div>
-    <div class="card"><h3>Always current</h3><p>The clock is tracked continuously in the background. Every request is answered instantly, with no lookup delay.</p></div>
+    <div class="card"><h3>Always Current</h3><p>The clock is tracked continuously in the background. Every request is answered instantly, with no lookup delay.</p></div>
     <div class="card"><h3>Lightweight</h3><p>One small Node process. Runs comfortably on a 1 GB free-tier cloud server.</p></div>
   </div>
 
-  <h2>What you need</h2>
+  <h2>What You Need</h2>
   <ul>
     <li>A Linux server (Ubuntu or Debian) with a public IP address. A free Oracle Cloud server works; steps are below.</li>
     <li>Inbound <strong>UDP 123</strong> (time) and <strong>TCP 8787</strong> (web API) allowed to that server.</li>
   </ul>
 
-  <h2>Set up the server</h2>
+  <h2>Set Up the Server</h2>
   <ol class="steps">
     <li><strong>Create a server</strong>
       Use any Ubuntu or Debian server. On Oracle Cloud Always Free: <em>Compute → Instances → Create instance</em>, image <strong>Canonical Ubuntu 22.04 Minimal</strong>, shape <strong>VM.Standard.E2.1.Micro</strong>, let it create a new public network, and download the SSH key it generates. When it shows <em>Running</em>, copy its <strong>Public IP address</strong>.
@@ -63,7 +63,7 @@
     </li>
   </ol>
 
-  <h2>Run the server on macOS or Windows instead</h2>
+  <h2>Run the Server on macOS or Windows Instead</h2>
   <p>No cloud server? Any always-on computer on your network can host FastFlare. Other devices on the same network then use that computer's address as their time server.</p>
   <h3>macOS</h3>
 <pre><code>curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.command | bash</code></pre>
@@ -74,7 +74,7 @@
   <p>Or download <a href="https://github.com/ArthWarrior3201/FastFlare/blob/main/deploy/install.cmd"><code>install.cmd</code></a> and double-click it. It installs Node.js if needed, opens the firewall ports and starts FastFlare at every boot. To make a Windows PC take its time from an existing FastFlare server in one step, run <code>install.cmd -Client SERVER.IP</code>. To remove FastFlare: <code>install.cmd -Uninstall</code>.</p>
   <p>The PC running FastFlare cannot use itself as its own time source; point your other devices at its address instead.</p>
 
-  <h2>Point your devices at it</h2>
+  <h2>Point Your Devices at It</h2>
 
   <h3>Windows</h3>
   <p>Open Command Prompt <strong>as administrator</strong> and run (replace the IP):</p>
@@ -107,7 +107,7 @@ w32tm /resync /force</code></pre>
 const t = await (await fetch('http://YOUR.SERVER.IP:8787/time?tz=Asia/Kolkata')).json();
 console.log(t.local);</code></pre>
 
-  <h2>No UDP? Use a web host</h2>
+  <h2>No UDP? Use a Web Host</h2>
   <p>Some hosts (Render, Vercel and similar) only provide HTTP, which Windows cannot use as a time source directly. Deploy FastFlare there (the repository includes a <code>render.yaml</code>) and sync Windows over HTTPS instead. In an administrator PowerShell:</p>
 <pre><code>powershell -ExecutionPolicy Bypass -File windows-sync.ps1 -Server https://your-app.onrender.com -Install</code></pre>
   <p>The script, <a href="https://github.com/ArthWarrior3201/FastFlare/blob/main/tools/windows-sync.ps1"><code>tools/windows-sync.ps1</code></a>, corrects the clock every 15 minutes. Expect tens of milliseconds of accuracy with this method, compared with a few using the server above.</p>

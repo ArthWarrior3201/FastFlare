@@ -3,25 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FastFlare CAPTCHA integration</title>
+<title>Bot Protection · FastFlare</title>
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 <header class="nav">
   <a class="brand" href="index.html">Fast<span>Flare</span></a>
   <nav>
-    <a href="captcha.html" aria-current="page">CAPTCHA</a>
+    <a href="captcha.html" aria-current="page">Bot Protection</a>
     <a href="speedtest.html">Speed Test</a>
-    <a href="envtime.html">EnvTime</a>
-    <a href="speedtest-app.html">Live speed test</a>
+    <a href="envtime.html">Time Server (NTP)</a>
+    <a href="speedtest-app.html">Live Speed Test</a>
     <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
   </nav>
 </header>
 <main>
-  <h1>Bot protection, <em>no picture puzzles</em></h1>
+  <h1>Bot Protection <em>Without Picture Grids</em></h1>
   <p class="lead">Add a widget to your form, verify one token on your server. Visitors see a one-line "Verified" badge, not a grid of crosswalks.</p>
 
-  <h2>How it works</h2>
+  <h2>How It Works</h2>
   <ol>
     <li>The widget asks your FastFlare server for a signed challenge and solves a small SHA-256 proof-of-work in Web Workers. Difficulty rises for networks sending many requests.</li>
     <li>While that runs, it records the visitor's real pointer path. People accelerate, brake and wobble; scripts tend to move in straight lines at constant speed.</li>
@@ -31,10 +31,10 @@
   </ol>
   <div class="note"><strong>Security notes.</strong> No CAPTCHA is absolute. Bots that read the puzzle with computer vision, or pay people to solve it remotely, can pass it. FastFlare limits the damage with per-network quotas and lock-outs, but you should also rate-limit the action the token protects (sign-up, login, checkout). The <code>method</code> field in siteverify tells you whether a token came from an invisible pass or a solved puzzle.</div>
 
-  <h3>Limits per network</h3>
+  <h3>Limits per Network</h3>
   <p>Over a rolling 10 minutes, each network address gets <code>FF_QUOTA_SOFT</code> invisible verifications (default 1); after that every verification needs the puzzle. At <code>FF_QUOTA_HARD</code> tokens (default 8) it stops issuing them (<code>429 too_many_tokens</code>). Three failed puzzles lock the address out for the rest of the window (<code>429 too_many_failures</code>). Sites whose visitors share one address (mobile carriers, offices, campuses) may want higher numbers.</p>
 
-  <h2>1 · Create site keys</h2>
+  <h2>1 · Create Site Keys</h2>
   <p>Create <code>config/sites.json</code> on your FastFlare server (it is git-ignored). Use long random secrets.</p>
 <pre><code>{
   "ff_site_3f9a1c": {
@@ -44,7 +44,7 @@
 }</code></pre>
   <p><code>origins</code> is optional. When set, only browsers on those origins can request challenges for that key. Without any config the server enables a public demo key, <code>ff_demo_site</code> / <code>ff_demo_secret</code>, for testing only.</p>
 
-  <h2>2 · Add the widget to your page</h2>
+  <h2>2 · Add the Widget to Your Page</h2>
 <pre><code>&lt;script src="https://YOUR-FASTFLARE-HOST/fastflare.js" async defer&gt;&lt;/script&gt;
 
 &lt;form method="post" action="/signup"&gt;
@@ -54,7 +54,7 @@
 &lt;/form&gt;</code></pre>
   <p>This shows an <strong>"I'm not a robot"</strong> box. While the page loads, the widget quietly prepares the proof-of-work, so when the visitor clicks, verification takes a moment. People who look human are verified on the spot; anyone FastFlare is unsure about gets the quick shape puzzle. The widget adds a hidden field named <code>ff-token</code> to the form. Tokens last two minutes; after that the box unchecks itself and the visitor clicks it again. Because the script is loaded from your own FastFlare host, it knows where to talk to automatically. If you host <code>fastflare.js</code> elsewhere, add <code>data-api="https://YOUR-FASTFLARE-HOST"</code>.</p>
 
-  <h3>Options (data attributes or JS)</h3>
+  <h3>Options (Data Attributes or JavaScript)</h3>
   <table>
     <tr><th>Attribute</th><th>Meaning</th></tr>
     <tr><td><code>data-sitekey</code></td><td>Required. Your site key.</td></tr>
@@ -67,7 +67,7 @@
     <tr><td><code>data-settle</code></td><td>Longest wait, in milliseconds, for pointer movement before submitting (default 500 after a click, 3000 in auto mode). Visitors who do not move get the puzzle.</td></tr>
   </table>
 
-  <h3>Programmatic and invisible use</h3>
+  <h3>Programmatic and Invisible Use</h3>
 <pre><code>// Render into any element
 const w = FastFlare.render('#box', { sitekey: 'ff_site_3f9a1c', theme: 'dark', callback: (t) =&gt; console.log(t) });
 w.token();   // current token or null
@@ -78,7 +78,7 @@ const token = await FastFlare.execute({ sitekey: 'ff_site_3f9a1c', api: 'https:/
 await fetch('/api/comment', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ text, 'ff-token': token }) });</code></pre>
 
-  <h2>3 · Verify on your server</h2>
+  <h2>3 · Verify on Your Server</h2>
   <p><strong>Always verify server-side.</strong> A token in the browser proves nothing until your backend checks it. Tokens are single-use and expire after two minutes.</p>
   <p><code>POST /captcha/siteverify</code> with <code>secret</code>, <code>response</code> (the token) and optionally <code>remoteip</code>. JSON and form encoding both work, like reCAPTCHA.</p>
 
@@ -110,7 +110,7 @@ if (empty($out['success'])) { http_response_code(400); exit; }</code></pre>
 { "success": false, "error-codes": ["timeout-or-duplicate"] }</code></pre>
   <p>Error codes: <code>invalid-input-secret</code>, <code>invalid-input-response</code>, <code>timeout-or-duplicate</code>, <code>remoteip-mismatch</code>. <code>score</code> is 0 to 1 (higher is more human-looking). Use it to decide whether to add your own extra checks on risky actions.</p>
 
-  <h2>Live demo</h2>
+  <h2>Live Demo</h2>
   <p>Uses the demo key against a FastFlare server you enter (the page below on GitHub Pages is static, so it needs a running server).</p>
   <div class="card">
     <label for="api">FastFlare server URL</label>
@@ -134,7 +134,7 @@ if (empty($out['success'])) { http_response_code(400); exit; }</code></pre>
     };
   </script>
 
-  <h2>Server API reference</h2>
+  <h2>Server API Reference</h2>
   <table>
     <tr><th>Endpoint</th><th>Called by</th><th>Purpose</th></tr>
     <tr><td><code>POST /captcha/challenge</code> <code>{sitekey}</code></td><td>Browser</td><td>Returns a signed proof-of-work challenge.</td></tr>

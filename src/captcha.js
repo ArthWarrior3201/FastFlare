@@ -8,7 +8,7 @@ const PUZZLE_TTL = 120_000;
 const WINDOW_MS = 10 * 60_000;
 const MAX_BITS = 23;
 const PASS_SCORE = 0.5;
-const TOLERANCE = 5; // pixels: easy to hit by eye, about a 4% chance for a blind guess
+const TOLERANCE = 6; // pixels: easy to line up by eye (with nudge buttons), about a 5% chance for a blind guess
 const PUZZLE_TRIES = 2; // puzzles per verification before giving up
 const MAX_FAILS = 3; // failed puzzles per network per window before it is locked out
 

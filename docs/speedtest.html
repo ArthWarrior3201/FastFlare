@@ -3,26 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FastFlare Speed Test integration</title>
+<title>Speed Test · FastFlare</title>
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 <header class="nav">
   <a class="brand" href="index.html">Fast<span>Flare</span></a>
   <nav>
-    <a href="captcha.html">CAPTCHA</a>
+    <a href="captcha.html">Bot Protection</a>
     <a href="speedtest.html" aria-current="page">Speed Test</a>
-    <a href="envtime.html">EnvTime</a>
-    <a href="speedtest-app.html">Live speed test</a>
+    <a href="envtime.html">Time Server (NTP)</a>
+    <a href="speedtest-app.html">Live Speed Test</a>
     <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
   </nav>
 </header>
 <main>
-  <h1>Speed test, <em>by provider and city</em></h1>
+  <h1>Speed Test <em>by Provider and City</em></h1>
   <p class="lead">Visitors pick a provider, then a city that provider has a server in, and run a test against that exact server. You get download, upload, latency, jitter and packet loss, plus live throughput data for graphs.</p>
   <p><a class="btn" href="speedtest-app.html">Open the live speed test</a></p>
 
-  <h2>How the provider and city list works</h2>
+  <h2>How the Provider and City List Works</h2>
   <p>A speed test is only meaningful against a real server, so each location is a FastFlare node you run. Start the same server on a VM at each provider and city, and tell it where it is:</p>
 <pre><code># On a VM in AWS Frankfurt
 FF_PROVIDER="AWS" FF_CITY="Frankfurt" FF_COUNTRY="DE" \
@@ -37,7 +37,7 @@ FF_PUBLIC_URL="https://fra.speed.example.com" node src/server.js</code></pre>
   <p>The registry's own <code>FF_PROVIDER</code> / <code>FF_CITY</code> are listed too. The city dropdown only shows cities where the chosen provider has a node, because it is built from this list. Nodes need HTTPS if the page using them is HTTPS, and every node sends CORS headers so the browser can talk to any of them.</p>
   <div class="note">Public nodes serve test traffic to any visitor. Each request is capped by <code>FF_MAX_BYTES</code> (default 100 MB); add a bandwidth limit at your provider if you want a monthly ceiling.</div>
 
-  <h2>Embed it in your app</h2>
+  <h2>Embed It in Your App</h2>
 <pre><code>&lt;script src="https://YOUR-REGISTRY-HOST/fastflare-speedtest.js"&gt;&lt;/script&gt;
 
 &lt;select id="provider"&gt;&lt;/select&gt; &lt;select id="city"&gt;&lt;/select&gt; &lt;button id="start"&gt;Start&lt;/button&gt;
@@ -95,7 +95,7 @@ $('start').onclick = async () =&gt; {
   startedAt, durationMs
 }</code></pre>
 
-  <h3>How the numbers are measured</h3>
+  <h3>How the Numbers Are Measured</h3>
   <ul>
     <li><strong>Latency and jitter:</strong> 20 pings after one discarded connection-setup ping. Each ping uses the browser's own network timing (request sent to first byte back), so script overhead is not included. Jitter is the average difference between consecutive pings.</li>
     <li><strong>Download:</strong> 10 seconds over 4 parallel connections, with request sizes that adapt to the line. The first 2 seconds (connection ramp-up) are ignored; the result is the steady-state rate.</li>
@@ -105,7 +105,7 @@ $('start').onclick = async () =&gt; {
   <p>Tested against connections with known speed and delay (3 to 100 Mbps, 10 to 120 ms): results were within about 3% for speed and within about 4 ms for latency.</p>
   <div class="note">A test can only measure up to the server's own connection. Oracle's free <code>VM.Standard.E2.1.Micro</code> is limited to roughly 50 Mbps to the internet, so faster lines will read about 50 against it. Use a larger server for gigabit testing.</div>
 
-  <h2>Server endpoints</h2>
+  <h2>Server Endpoints</h2>
   <table>
     <tr><td><code>GET /speed/servers</code></td><td>The provider/city registry.</td></tr>
     <tr><td><code>GET /speed/ping</code></td><td>Empty reply, for latency.</td></tr>

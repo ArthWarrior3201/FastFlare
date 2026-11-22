@@ -312,7 +312,7 @@
         img.data[o] = 255;
         img.data[o + 1] = edge ? 255 : Math.round(138 - (y / size) * 60);
         img.data[o + 2] = edge ? 255 : Math.round(61 + (y / size) * 80);
-        img.data[o + 3] = 255;
+        img.data[o + 3] = edge ? 255 : 150; // see-through, so the hole is visible while lining it up
       }
     }
     g.putImageData(img, 0, 0);
@@ -323,14 +323,18 @@
       var wrap = document.createElement('div');
       wrap.className = 'ff-pz';
       wrap.innerHTML =
-        '<div class="ff-pz-t">Quick check: slide the piece into the hole with the same shape.</div>' +
+        '<div class="ff-pz-t">Drag the piece over the hole with the same shape, then press Verify.</div>' +
         '<div class="ff-pz-s"><img alt="Picture with several shaped holes" draggable="false"><canvas class="ff-pz-p" aria-hidden="true"></canvas></div>' +
-        '<div class="ff-pz-tr"><div class="ff-pz-k" role="slider" tabindex="0" aria-label="Move the piece. Arrow keys move it, Enter confirms." aria-valuemin="0"></div></div>' +
-        '<div class="ff-pz-h">Drag the handle or the piece. Keyboard: arrow keys, then Enter.</div>';
+        '<div class="ff-pz-tr"><div class="ff-pz-k" role="slider" tabindex="0" aria-label="Piece position. Arrow keys move it, Enter verifies." aria-valuemin="0"></div></div>' +
+        '<div class="ff-pz-a">' +
+        '<button type="button" class="ff-pz-n" data-d="-1" aria-label="Move piece left">&#8249;</button>' +
+        '<button type="button" class="ff-pz-n" data-d="1" aria-label="Move piece right">&#8250;</button>' +
+        '<button type="button" class="ff-pz-v" disabled>Verify</button></div>';
       var stage = wrap.querySelector('.ff-pz-s');
       var img = wrap.querySelector('img');
       var piece = wrap.querySelector('.ff-pz-p');
       var knob = wrap.querySelector('.ff-pz-k');
+      var verifyBtn = wrap.querySelector('.ff-pz-v');
       img.src = pz.image;
       drawPiece(piece, pz.shape, pz.size);
       piece.style.width = (pz.size / pz.width) * 100 + '%';
@@ -340,16 +344,17 @@
       function set(v) {
         x = Math.max(0, Math.min(maxX, v));
         piece.style.left = (x / pz.width) * 100 + '%';
-        knob.style.left = 'calc((100% - 28px) * ' + x / maxX + ')';
+        knob.style.left = 'calc((100% - var(--ffk)) * ' + x / maxX + ')';
         knob.setAttribute('aria-valuenow', String(Math.round(x)));
+        verifyBtn.disabled = x < 2;
       }
       function rec(e) {
         trace.push([Math.round(e.clientX), Math.round(e.clientY), Math.round((e.timeStamp || performance.now()) * 10) / 10]);
-        if (trace.length > 300) trace.shift();
+        if (trace.length > 400) trace.shift();
       }
       function scale() { return stage.getBoundingClientRect().width / pz.width || 1; }
       function done() {
-        if (finished) return;
+        if (finished || x < 2) return;
         finished = true;
         wrap.remove();
         resolve({ x: Math.round(x), trace: trace, keys: keys });
@@ -371,7 +376,6 @@
         if (!dragging) return;
         dragging = false;
         rec(e);
-        done();
       }
       [knob, piece].forEach(function (el) {
         el.addEventListener('pointerdown', down);
@@ -379,6 +383,13 @@
         el.addEventListener('pointerup', up);
         el.addEventListener('pointercancel', function () { dragging = false; });
       });
+      [].forEach.call(wrap.querySelectorAll('.ff-pz-n'), function (b) {
+        b.addEventListener('click', function (e) {
+          set(x + Number(b.dataset.d));
+          keys.push(e.timeStamp || performance.now());
+        });
+      });
+      verifyBtn.addEventListener('click', done);
       knob.addEventListener('keydown', function (e) {
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
           set(x + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 1 : 4));
@@ -434,9 +445,13 @@
     '.ff-pz-s{position:relative;border-radius:10px;overflow:hidden;line-height:0;border:1px solid var(--ffb)}' +
     '.ff-pz-s img{width:100%;height:auto;display:block;user-select:none;-webkit-user-drag:none}' +
     '.ff-pz-p{position:absolute;left:0;height:auto;cursor:grab;touch-action:none;filter:drop-shadow(0 2px 5px rgba(0,0,0,.6))}' +
-    '.ff-pz-tr{position:relative;height:28px;margin:10px 0 6px;border-radius:14px;background:var(--ffb)}' +
-    '.ff-pz-k{position:absolute;top:0;left:0;width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#ff8a3d,#ff4d8d);cursor:grab;touch-action:none;box-shadow:0 2px 8px rgba(0,0,0,.35)}' +
-    '.ff-pz-k:focus-visible{outline:2px solid #7c5cff;outline-offset:2px}.ff-pz-h{font-size:11px;color:var(--ffm)}' +
+    '.ff-pz{--ffk:30px}@media(pointer:coarse){.ff-pz{--ffk:40px}}' +
+    '.ff-pz-tr{position:relative;height:var(--ffk);margin:10px 0 8px;border-radius:999px;background:var(--ffb)}' +
+    '.ff-pz-k{position:absolute;top:0;left:0;width:var(--ffk);height:var(--ffk);border-radius:50%;background:linear-gradient(135deg,#ff8a3d,#ff4d8d);cursor:grab;touch-action:none;box-shadow:0 2px 8px rgba(0,0,0,.35)}' +
+    '.ff-pz-k:focus-visible,.ff-pz-a button:focus-visible{outline:2px solid #7c5cff;outline-offset:2px}' +
+    '.ff-pz-a{display:flex;gap:8px}.ff-pz-a button{font:600 15px/1 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;border-radius:10px;cursor:pointer;min-height:var(--ffk)}' +
+    '.ff-pz-n{width:var(--ffk);border:1px solid var(--ffb);background:transparent;color:var(--fft);font-size:22px!important}' +
+    '.ff-pz-v{flex:1;border:0;color:#1a0d05;background:linear-gradient(90deg,#ff8a3d,#ff4d8d)}.ff-pz-v:disabled{opacity:.45;cursor:default}' +
     '.ff-ov{position:fixed;inset:0;z-index:2147483646;background:rgba(5,7,20,.6);display:grid;place-items:center;padding:16px}' +
     '.ff-pnl{background:var(--ffbg);border:1px solid var(--ffb);border-radius:16px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.5)}' +
     '.ff-r{background:none;border:0;color:#ff8a3d;cursor:pointer;font:inherit;text-decoration:underline;padding:0}' +
