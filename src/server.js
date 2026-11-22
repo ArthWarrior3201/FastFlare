@@ -31,6 +31,7 @@ export async function createApp(overrides = {}) {
     baseBits: config.captchaBaseBits,
     quotaSoft: config.quotaSoft,
     quotaHard: config.quotaHard,
+    puzzleMinMs: config.puzzleMinMs,
   });
   const speed = createSpeedtest({
     node: config.node,
@@ -103,17 +104,23 @@ export async function createApp(overrides = {}) {
         return send(res, 200, captcha.issue({ sitekey: b.sitekey, ip, origin: req.headers.origin }), CORS);
       }
       if (p === '/captcha/verify' && req.method === 'POST') {
-        const b = await readBody(req);
+        const b = await readBody(req, 64 * 1024);
         const r = captcha.verify({
           sitekey: b.sitekey,
           challenge: b.challenge,
           nonce: b.nonce,
           signals: b.signals,
+          trace: b.trace,
           hp: b.hp,
           ip,
           ua: String(req.headers['user-agent'] || ''),
           origin: req.headers.origin,
         });
+        return send(res, 200, r, CORS);
+      }
+      if (p === '/captcha/puzzle' && req.method === 'POST') {
+        const b = await readBody(req, 64 * 1024);
+        const r = captcha.solvePuzzle({ sitekey: b.sitekey, id: b.id, x: b.x, trace: b.trace, keys: b.keys, ip, origin: req.headers.origin });
         return send(res, 200, r, CORS);
       }
       // Server-to-server only: deliberately no CORS headers (it takes your secret key).

@@ -23,13 +23,16 @@
 
   <h2>How it works</h2>
   <ol>
-    <li>The widget asks your FastFlare server for a signed challenge.</li>
-    <li>The browser solves a small SHA-256 proof-of-work in Web Workers (a fraction of a second normally). Real people don't notice; running it thousands of times costs a bot farm real CPU.</li>
-    <li>It also reports behaviour signals (pointer and keyboard activity, <code>navigator.webdriver</code>, and so on). Clean traffic passes. Odd traffic gets a harder proof-of-work. Obvious automation is rejected.</li>
-    <li>The server returns a short-lived, single-use token. Your backend exchanges it at <code>/captcha/siteverify</code>.</li>
+    <li>The widget asks your FastFlare server for a signed challenge and solves a small SHA-256 proof-of-work in Web Workers. Difficulty rises for networks sending many requests.</li>
+    <li>While that runs, it records the visitor's real pointer path. People accelerate, brake and wobble; scripts tend to move in straight lines at constant speed.</li>
+    <li>Clear automation (webdriver, headless browsers, non-browser clients, a filled honeypot, impossible timings) is rejected outright.</li>
+    <li>If everything looks human, the visitor is verified invisibly. If FastFlare is not sure, it shows a quick puzzle: slide a shape into the matching hole in a picture. The hole's position exists only in the picture, so a script calling the API cannot answer it blind. The drag itself is checked too.</li>
+    <li>The result is a short-lived, single-use token. Your backend exchanges it at <code>/captcha/siteverify</code>.</li>
   </ol>
-  <p>Difficulty rises automatically for any network that requests many challenges per minute.</p>
-  <div class="note"><strong>Security notes.</strong> Proof-of-work and behaviour signals make automated abuse expensive and stop most scripted traffic, but no CAPTCHA is absolute. Behaviour signals are reported by the browser, so treat them as one layer: combine FastFlare with rate limits on sensitive endpoints such as sign-in and checkout.</div>
+  <div class="note"><strong>Security notes.</strong> No CAPTCHA is absolute. Bots that read the puzzle with computer vision, or pay people to solve it remotely, can pass it. FastFlare limits the damage with per-network quotas and lock-outs, but you should also rate-limit the action the token protects (sign-up, login, checkout). The <code>method</code> field in siteverify tells you whether a token came from an invisible pass or a solved puzzle.</div>
+
+  <h3>Limits per network</h3>
+  <p>Over a rolling 10 minutes, each network address gets <code>FF_QUOTA_SOFT</code> invisible verifications (default 1); after that every verification needs the puzzle. At <code>FF_QUOTA_HARD</code> tokens (default 8) it stops issuing them (<code>429 too_many_tokens</code>). Three failed puzzles lock the address out for the rest of the window (<code>429 too_many_failures</code>). Sites whose visitors share one address (mobile carriers, offices, campuses) may want higher numbers.</p>
 
   <h2>1 · Create site keys</h2>
   <p>Create <code>config/sites.json</code> on your FastFlare server (it is git-ignored). Use long random secrets.</p>
@@ -60,7 +63,7 @@
     <tr><td><code>data-expired-callback</code>, <code>data-error-callback</code></td><td>Names of global functions.</td></tr>
     <tr><td><code>data-theme</code></td><td><code>light</code>, <code>dark</code> or <code>auto</code> (default).</td></tr>
     <tr><td><code>data-field</code></td><td>Hidden input name (default <code>ff-token</code>).</td></tr>
-    <tr><td><code>data-settle</code></td><td>Milliseconds to wait for a sign of human interaction before submitting (default 1200).</td></tr>
+    <tr><td><code>data-settle</code></td><td>Longest wait, in milliseconds, for pointer movement before submitting (default 3000). Visitors who do not move get the puzzle.</td></tr>
   </table>
 
   <h3>Programmatic and invisible use</h3>
@@ -102,12 +105,9 @@ $out = json_decode(file_get_contents('https://YOUR-FASTFLARE-HOST/captcha/siteve
 if (empty($out['success'])) { http_response_code(400); exit; }</code></pre>
 
   <h3>Responses</h3>
-<pre><code>{ "success": true, "challenge_ts": "2026-11-22T09:30:00.000Z", "score": 0.9 }
+<pre><code>{ "success": true, "challenge_ts": "2026-11-22T09:30:00.000Z", "score": 0.9, "method": "invisible" }
 { "success": false, "error-codes": ["timeout-or-duplicate"] }</code></pre>
   <p>Error codes: <code>invalid-input-secret</code>, <code>invalid-input-response</code>, <code>timeout-or-duplicate</code>, <code>remoteip-mismatch</code>. <code>score</code> is 0 to 1 (higher is more human-looking). Use it to decide whether to add your own extra checks on risky actions.</p>
-
-  <h3>Limits per network</h3>
-  <p>People rarely pass a CAPTCHA many times in a few minutes, so FastFlare also limits tokens per network address over a rolling 10 minutes. After the first <code>FF_QUOTA_SOFT</code> (default 4), each new token needs a progressively harder proof-of-work. At <code>FF_QUOTA_HARD</code> (default 8) it stops issuing tokens to that address and returns <code>429 too_many_tokens</code> until the window passes. Sites whose visitors share an address (mobile carriers, offices, campuses) should raise both numbers.</p>
 
   <h2>Live demo</h2>
   <p>Uses the demo key against a FastFlare server you enter (the page below on GitHub Pages is static, so it needs a running server).</p>
@@ -137,7 +137,8 @@ if (empty($out['success'])) { http_response_code(400); exit; }</code></pre>
   <table>
     <tr><th>Endpoint</th><th>Called by</th><th>Purpose</th></tr>
     <tr><td><code>POST /captcha/challenge</code> <code>{sitekey}</code></td><td>Browser</td><td>Returns a signed proof-of-work challenge.</td></tr>
-    <tr><td><code>POST /captcha/verify</code> <code>{sitekey, challenge, nonce, signals, hp}</code></td><td>Browser</td><td>Checks the proof and signals. Returns <code>{ok, token}</code>, <code>{ok:false, retry:true, challenge}</code> (step-up) or 403.</td></tr>
+    <tr><td><code>POST /captcha/verify</code> <code>{sitekey, challenge, nonce, signals, trace, hp}</code></td><td>Browser</td><td>Checks the proof, signals and pointer path. Returns <code>{ok, token}</code>, <code>{ok:false, puzzle}</code> or 403/429.</td></tr>
+    <tr><td><code>POST /captcha/puzzle</code> <code>{sitekey, id, x, trace | keys}</code></td><td>Browser</td><td>Checks a puzzle answer and the drag. Returns <code>{ok, token}</code>, a new puzzle, or 403/429.</td></tr>
     <tr><td><code>POST /captcha/siteverify</code> <code>{secret, response, remoteip?}</code></td><td>Your backend</td><td>Validates and consumes a token. Has no CORS headers on purpose, since it takes your secret.</td></tr>
   </table>
   <p>Keep <code>FF_SECRET</code> stable and shared if you run several instances. Behind a proxy, set <code>TRUST_PROXY=1</code>.</p>

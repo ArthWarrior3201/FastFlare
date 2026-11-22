@@ -160,9 +160,17 @@
     var s = { pm: 0, kd: 0, tc: 0, sc: 0, fc: 0, pv: 0 };
     var t0 = Date.now();
     var pts = [];
+    var trace = [];
+    var lastT = -1e9;
     function onMove(e) {
       s.pm++;
       if (pts.length < 40 && s.pm % 2 === 0) pts.push([e.clientX, e.clientY]);
+      var t = e.timeStamp || performance.now();
+      if (t - lastT >= 8) {
+        lastT = t;
+        trace.push([Math.round(e.clientX), Math.round(e.clientY), Math.round(t * 10) / 10]);
+        if (trace.length > 200) trace.shift();
+      }
     }
     var handlers = {
       pointermove: onMove,
@@ -175,6 +183,12 @@
     Object.keys(handlers).forEach(function (k) { document.addEventListener(k, handlers[k], opts); });
     return {
       interacted: function () { return s.pm >= 3 || s.kd >= 1 || s.tc >= 1 || s.sc >= 1; },
+      // Enough real pointer movement for the server to judge the path.
+      traceReady: function () { return trace.length >= 15 && trace[trace.length - 1][2] - trace[0][2] >= 300; },
+      trace: function () {
+        var base = trace.length ? trace[0][2] : 0;
+        return trace.map(function (p) { return [p[0], p[1], Math.round((p[2] - base) * 10) / 10]; });
+      },
       snapshot: function () {
         // Largest sideways deviation of the recorded pointer path from the straight line start->end.
         // Scripted mouse moves are perfectly straight; human ones are not.
@@ -217,29 +231,167 @@
 
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-  // Runs the full flow and resolves { token, expires }.
+  // Runs the full flow and resolves { token, expires }. hooks.puzzle(puzzle) must resolve { x, trace, keys }.
   function run(opts, hooks) {
     hooks = hooks || {};
     var sig = Signals();
-    var settle = opts.settle == null ? 1200 : opts.settle;
-    function attempt(challenge) {
-      return solvePow(challenge).then(function (nonce) {
-        var waited = settle > 0 && !sig.interacted() ? wait(settle) : Promise.resolve();
-        return waited.then(function () {
-          return post(opts.api, '/captcha/verify', {
-            sitekey: opts.sitekey, challenge: challenge, nonce: nonce, signals: sig.snapshot(), hp: opts.hp || '',
-          });
-        });
+    var settle = opts.settle == null ? 3000 : opts.settle;
+    function waitForPointer() {
+      return new Promise(function (resolve) {
+        var t0 = Date.now();
+        (function poll() {
+          if (sig.traceReady() || Date.now() - t0 >= settle) return resolve();
+          setTimeout(poll, 100);
+        })();
       });
     }
+    function handle(r) {
+      if (r.ok) return r;
+      if (r.puzzle) {
+        if (!hooks.puzzle) throw new Error('puzzle_required');
+        return hooks.puzzle(r.puzzle).then(function (ans) {
+          return post(opts.api, '/captcha/puzzle', { sitekey: opts.sitekey, id: r.puzzle.id, x: ans.x, trace: ans.trace, keys: ans.keys });
+        }).then(handle);
+      }
+      throw new Error('failed');
+    }
     return post(opts.api, '/captcha/challenge', { sitekey: opts.sitekey })
-      .then(function (r) { return attempt(r.challenge); })
       .then(function (r) {
-        if (r.ok) return r;
-        if (r.retry) { if (hooks.stepup) hooks.stepup(); return attempt(r.challenge); }
-        throw new Error('failed');
+        var challenge = r.challenge;
+        return Promise.all([solvePow(challenge), waitForPointer()]).then(function (x) {
+          return post(opts.api, '/captcha/verify', {
+            sitekey: opts.sitekey, challenge: challenge, nonce: x[0], signals: sig.snapshot(), trace: sig.trace(), hp: opts.hp || '',
+          });
+        });
       })
-      .then(function (r) { sig.stop(); if (!r.ok) throw new Error('failed'); return r; }, function (e) { sig.stop(); throw e; });
+      .then(handle)
+      .then(function (r) { sig.stop(); return r; }, function (e) { sig.stop(); throw e; });
+  }
+
+  // ---- Puzzle -------------------------------------------------------------------------------
+  function insideShape(shape, u, v) {
+    var au = Math.abs(u), av = Math.abs(v);
+    switch (shape) {
+      case 'circle': return u * u + v * v <= 1;
+      case 'square': return au <= 0.8 && av <= 0.8;
+      case 'triangle': return v <= 0.85 && v >= -0.95 && au <= (v + 0.95) / 1.8;
+      case 'diamond': return au + av <= 1;
+      case 'cross': return (au <= 0.34 && av <= 0.95) || (av <= 0.34 && au <= 0.95);
+    }
+    return false;
+  }
+
+  function drawPiece(canvas, shape, size) {
+    canvas.width = canvas.height = size;
+    var g = canvas.getContext('2d');
+    var img = g.createImageData(size, size);
+    var h = size / 2;
+    for (var y = 0; y < size; y++) {
+      for (var x = 0; x < size; x++) {
+        var u = (x + 0.5 - h) / h, v = (y + 0.5 - h) / h;
+        if (!insideShape(shape, u, v)) continue;
+        var o = (y * size + x) * 4;
+        var edge = !insideShape(shape, u / 0.86, v / 0.86);
+        img.data[o] = 255;
+        img.data[o + 1] = edge ? 255 : Math.round(138 - (y / size) * 60);
+        img.data[o + 2] = edge ? 255 : Math.round(61 + (y / size) * 80);
+        img.data[o + 3] = 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+  }
+
+  function puzzleUI(host, pz) {
+    return new Promise(function (resolve) {
+      var wrap = document.createElement('div');
+      wrap.className = 'ff-pz';
+      wrap.innerHTML =
+        '<div class="ff-pz-t">Quick check: slide the piece into the hole with the same shape.</div>' +
+        '<div class="ff-pz-s"><img alt="Picture with several shaped holes" draggable="false"><canvas class="ff-pz-p" aria-hidden="true"></canvas></div>' +
+        '<div class="ff-pz-tr"><div class="ff-pz-k" role="slider" tabindex="0" aria-label="Move the piece. Arrow keys move it, Enter confirms." aria-valuemin="0"></div></div>' +
+        '<div class="ff-pz-h">Drag the handle or the piece. Keyboard: arrow keys, then Enter.</div>';
+      var stage = wrap.querySelector('.ff-pz-s');
+      var img = wrap.querySelector('img');
+      var piece = wrap.querySelector('.ff-pz-p');
+      var knob = wrap.querySelector('.ff-pz-k');
+      img.src = pz.image;
+      drawPiece(piece, pz.shape, pz.size);
+      piece.style.width = (pz.size / pz.width) * 100 + '%';
+      piece.style.top = (pz.y / pz.height) * 100 + '%';
+      var maxX = pz.width - pz.size, x = 0, trace = [], keys = [], dragging = false, startClient = 0, startX = 0, finished = false;
+      knob.setAttribute('aria-valuemax', String(maxX));
+      function set(v) {
+        x = Math.max(0, Math.min(maxX, v));
+        piece.style.left = (x / pz.width) * 100 + '%';
+        knob.style.left = 'calc((100% - 28px) * ' + x / maxX + ')';
+        knob.setAttribute('aria-valuenow', String(Math.round(x)));
+      }
+      function rec(e) {
+        trace.push([Math.round(e.clientX), Math.round(e.clientY), Math.round((e.timeStamp || performance.now()) * 10) / 10]);
+        if (trace.length > 300) trace.shift();
+      }
+      function scale() { return stage.getBoundingClientRect().width / pz.width || 1; }
+      function done() {
+        if (finished) return;
+        finished = true;
+        wrap.remove();
+        resolve({ x: Math.round(x), trace: trace, keys: keys });
+      }
+      function down(e) {
+        dragging = true;
+        startClient = e.clientX;
+        startX = x;
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+        rec(e);
+        e.preventDefault();
+      }
+      function move(e) {
+        if (!dragging) return;
+        set(startX + (e.clientX - startClient) / scale());
+        rec(e);
+      }
+      function up(e) {
+        if (!dragging) return;
+        dragging = false;
+        rec(e);
+        done();
+      }
+      [knob, piece].forEach(function (el) {
+        el.addEventListener('pointerdown', down);
+        el.addEventListener('pointermove', move);
+        el.addEventListener('pointerup', up);
+        el.addEventListener('pointercancel', function () { dragging = false; });
+      });
+      knob.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          set(x + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 1 : 4));
+          keys.push(e.timeStamp || performance.now());
+          e.preventDefault();
+        } else if (e.key === 'Enter') {
+          keys.push(e.timeStamp || performance.now());
+          e.preventDefault();
+          done();
+        }
+      });
+      set(0);
+      host.appendChild(wrap);
+    });
+  }
+
+  // Full-screen dialog for the invisible execute() flow.
+  function puzzleModal(pz) {
+    injectStyle();
+    var overlay = document.createElement('div');
+    overlay.className = 'ff-ov';
+    var panel = document.createElement('div');
+    panel.className = 'ff-pzh ff-pnl';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', 'Verification');
+    panel.dataset.theme = global.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    return puzzleUI(panel, pz).then(function (a) { overlay.remove(); return a; });
   }
 
   // ---- Widget -------------------------------------------------------------------------------
@@ -248,11 +400,21 @@
   var STYLE =
     '.ff-w{display:inline-flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;font:14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;' +
     'border:1px solid var(--ffb);background:var(--ffbg);color:var(--fft);min-width:220px;box-sizing:border-box}' +
-    '.ff-w[data-theme=light]{--ffb:#d7dbe6;--ffbg:#fff;--fft:#1b2030;--ffm:#6b7280}' +
-    '.ff-w[data-theme=dark]{--ffb:#2c3350;--ffbg:#12162a;--fft:#e8ebf7;--ffm:#8b93b5}' +
+    '.ff-w[data-theme=light],.ff-pzh[data-theme=light]{--ffb:#d7dbe6;--ffbg:#fff;--fft:#1b2030;--ffm:#6b7280}' +
+    '.ff-w[data-theme=dark],.ff-pzh[data-theme=dark]{--ffb:#2c3350;--ffbg:#12162a;--fft:#e8ebf7;--ffm:#8b93b5}' +
+    '.ff-pzh{color:var(--fft);font:14px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}' +
+    '.ff-pz{margin-top:10px;width:300px;max-width:100%}.ff-pz-t{font-size:13px;margin-bottom:8px}' +
+    '.ff-pz-s{position:relative;border-radius:10px;overflow:hidden;line-height:0;border:1px solid var(--ffb)}' +
+    '.ff-pz-s img{width:100%;height:auto;display:block;user-select:none;-webkit-user-drag:none}' +
+    '.ff-pz-p{position:absolute;left:0;height:auto;cursor:grab;touch-action:none;filter:drop-shadow(0 2px 5px rgba(0,0,0,.6))}' +
+    '.ff-pz-tr{position:relative;height:28px;margin:10px 0 6px;border-radius:14px;background:var(--ffb)}' +
+    '.ff-pz-k{position:absolute;top:0;left:0;width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#ff8a3d,#ff4d8d);cursor:grab;touch-action:none;box-shadow:0 2px 8px rgba(0,0,0,.35)}' +
+    '.ff-pz-k:focus-visible{outline:2px solid #7c5cff;outline-offset:2px}.ff-pz-h{font-size:11px;color:var(--ffm)}' +
+    '.ff-ov{position:fixed;inset:0;z-index:2147483646;background:rgba(5,7,20,.6);display:grid;place-items:center;padding:16px}' +
+    '.ff-pnl{background:var(--ffbg);border:1px solid var(--ffb);border-radius:16px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.5)}' +
     '.ff-i{width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:13px;color:#fff;background:#8b93b5}' +
     '.ff-w[data-state=solving] .ff-i{background:none;border:2px solid #ff8a3d;border-top-color:transparent;animation:ffs .8s linear infinite;box-sizing:border-box}' +
-    '.ff-w[data-state=ok] .ff-i{background:#22b573}.ff-w[data-state=error] .ff-i{background:#e5484d}' +
+    '.ff-w[data-state=ok] .ff-i{background:#22b573}.ff-w[data-state=puzzle] .ff-i{background:#f5b942}.ff-w[data-state=error] .ff-i{background:#e5484d}' +
     '.ff-b{margin-left:auto;font-size:11px;color:var(--ffm);letter-spacing:.02em}' +
     '.ff-r{background:none;border:0;color:#ff8a3d;cursor:pointer;font:inherit;text-decoration:underline;padding:0}' +
     '@keyframes ffs{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.ff-i{animation:none!important}}';
@@ -305,7 +467,11 @@
     hp.autocomplete = 'off';
     hp.setAttribute('aria-hidden', 'true');
     hp.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;opacity:0';
+    var pzHost = document.createElement('div');
+    pzHost.className = 'ff-pzh';
+    pzHost.dataset.theme = theme;
     el.appendChild(box);
+    el.appendChild(pzHost);
     el.appendChild(input);
     el.appendChild(hp);
 
@@ -319,27 +485,43 @@
     function setState(state, msg) {
       box.dataset.state = state;
       text.textContent = msg;
-      icon.textContent = state === 'ok' ? '✓' : state === 'error' ? '!' : '';
+      icon.textContent = state === 'ok' ? '✓' : state === 'error' ? '!' : state === 'puzzle' ? '?' : '';
     }
 
     function start() {
       setState('solving', 'Verifying you are human…');
-      return run({ sitekey: opts.sitekey, api: opts.api, settle: opts.settle, hp: hp.value }, { stepup: function () { setState('solving', 'Extra check…'); } }).then(
+      pzHost.innerHTML = '';
+      var hooks = {
+        puzzle: function (pz) {
+          setState('puzzle', 'One quick check');
+          return puzzleUI(pzHost, pz).then(function (a) { setState('solving', 'Checking…'); return a; });
+        },
+      };
+      return run({ sitekey: opts.sitekey, api: opts.api, settle: opts.settle, hp: hp.value }, hooks).then(
         function (r) {
           input.value = r.token;
           setState('ok', 'Verified');
           if (opts.callback) opts.callback(r.token);
           el.dispatchEvent(new CustomEvent('ff-verified', { detail: { token: r.token }, bubbles: true }));
-          // Tokens last 2 minutes: renew at 100s so slow form-fillers always submit a valid one.
+          // Tokens last 2 minutes. Renew only when the visitor comes back to the page, so an idle tab
+          // does not keep collecting tokens.
           timer = setTimeout(function () {
             input.value = '';
             if (opts.expired) opts.expired();
-            start().catch(function () {});
+            setState('idle', 'Verification expired. ');
+            var again = function () {
+              document.removeEventListener('pointerdown', again, true);
+              document.removeEventListener('keydown', again, true);
+              if (!input.value && box.dataset.state === 'idle') start().catch(function () {});
+            };
+            document.addEventListener('pointerdown', again, true);
+            document.addEventListener('keydown', again, true);
           }, 100000);
           return r.token;
         },
         function (e) {
-          setState('error', 'Verification failed. ');
+          pzHost.innerHTML = '';
+          setState('error', e && (e.code === 'too_many_failures' || e.code === 'too_many_tokens') ? 'Too many attempts from this network. Try again later. ' : 'Verification failed. ');
           var b = document.createElement('button');
           b.type = 'button';
           b.className = 'ff-r';
@@ -361,7 +543,7 @@
   // One-shot, invisible use (e.g. before a fetch() to your own API): FastFlare.execute({sitekey}).then(token => ...)
   function execute(options) {
     var api = (options.api || defaultApi).replace(/\/$/, '');
-    return run({ sitekey: options.sitekey, api: api, settle: options.settle == null ? 600 : options.settle }).then(function (r) { return r.token; });
+    return run({ sitekey: options.sitekey, api: api, settle: options.settle == null ? 1500 : options.settle }, { puzzle: puzzleModal }).then(function (r) { return r.token; });
   }
 
   function autoRender() {

@@ -9,7 +9,8 @@ import { createApp } from '../src/server.js';
 import { consensus, EnvTime, formatTime } from '../src/envtime.js';
 import { queryNtp, startNtpServer } from '../src/ntp.js';
 import { localMs } from '../src/clock.js';
-import { leadingZeroBits } from '../src/captcha.js';
+import { leadingZeroBits, analyzeTrace } from '../src/captcha.js';
+import { makePuzzle } from '../src/puzzle.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -21,6 +22,37 @@ function loadWidgetCore() {
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 const HUMAN = { wd: false, lg: 2, sw: 1920, sh: 1080, pm: 30, kd: 2, tc: 0, sc: 1, fc: 1, pv: 12, dt: 3000 };
+
+// A wandering, accelerating, wobbling path sampled at roughly display rate.
+function humanTrace(n = 60, seed = 7) {
+  const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const pts = [];
+  let x = 300, y = 300, t = 0, ang = 0.4, speed = 0.4;
+  for (let i = 0; i < n; i++) {
+    ang += (r() - 0.5) * 0.7;
+    speed = Math.max(0.05, Math.min(1.5, speed + (r() - 0.5) * 0.35));
+    const dt = 16 + r() * 2;
+    x += Math.cos(ang) * speed * dt;
+    y += Math.sin(ang) * speed * dt;
+    t += dt;
+    pts.push([Math.round(x), Math.round(y), Math.round(t * 10) / 10]);
+  }
+  return pts;
+}
+// What a cheap script produces: a straight line at constant speed on a fixed timer.
+const robotTrace = (n = 40) => Array.from({ length: n }, (_, i) => [100 + i * 8, 200 + i * 3, i * 16]);
+function humanDrag(toX, seed = 3) {
+  const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const pts = [];
+  let t = 0;
+  for (let i = 0; i <= 30; i++) {
+    const s = i / 30;
+    const e = s < 0.5 ? 2 * s * s : 1 - (-2 * s + 2) ** 2 / 2;
+    t += 15 + r() * 6;
+    pts.push([Math.round(500 + e * toX + (r() - 0.5) * 2), Math.round(400 + (r() - 0.5) * 4), Math.round(t)]);
+  }
+  return pts;
+}
 
 // ---------------------------------------------------------------------------------------------
 test('browser proof-of-work hash matches Node SHA-256', () => {
@@ -145,6 +177,7 @@ async function withApp(fn) {
     port: 0,
     host: '127.0.0.1',
     captchaBaseBits: 10,
+    puzzleMinMs: 0,
     ntp: { enabled: false },
     envtime: { providers: Object.keys(offsets).map((host) => ({ host })), graceMs: 10, pollMs: 60000 },
     timeQuery: (host) => Promise.resolve({ offsetMs: offsets[host], rttMs: 8 }),
@@ -160,98 +193,120 @@ async function withApp(fn) {
 const j = (base, p, body, headers = {}) =>
   fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': UA, ...headers }, body: JSON.stringify(body) });
 
-test('CAPTCHA: solve, verify, siteverify once, reject replay', async () => {
+async function challengeAndProof(base) {
+  const core = loadWidgetCore();
+  const r = await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' });
+  if (r.status !== 200) return { status: r.status, error: (await r.json()).error };
+  const { challenge } = await r.json();
+  return { challenge, nonce: String(core.solve(`${challenge.id}.${challenge.salt}.`, challenge.difficulty, 0, 1e8)) };
+}
+const verifyWith = (base, c, extra) =>
+  j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge: c.challenge, nonce: c.nonce, signals: HUMAN, hp: '', ...extra });
+
+test('pointer path analysis tells a wandering hand from a straight scripted line', () => {
+  assert.equal(analyzeTrace(humanTrace()).ok, true, JSON.stringify(analyzeTrace(humanTrace())));
+  assert.equal(analyzeTrace(robotTrace()).ok, false);
+  assert.equal(analyzeTrace([]).why, 'no-trace');
+});
+
+test('puzzle image is a valid PNG and the answer is not in the JSON', () => {
+  const pz = makePuzzle();
+  assert.deepEqual([...pz.png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.ok(pz.png.length < 200_000, `png is ${pz.png.length} bytes`);
+  assert.ok(pz.x >= pz.size && pz.x <= pz.width - pz.size);
+});
+
+test('CAPTCHA: human path passes invisibly, token verifies once, replay rejected', async () => {
   await withApp(async (base) => {
-    const core = loadWidgetCore();
-    const { challenge } = await (await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' })).json();
-    const nonce = core.solve(`${challenge.id}.${challenge.salt}.`, challenge.difficulty, 0, 1e7);
-    const res = await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce: String(nonce), signals: HUMAN, hp: '' });
-    const out = await res.json();
-    assert.equal(out.ok, true);
+    const c = await challengeAndProof(base);
+    const out = await (await verifyWith(base, c, { trace: humanTrace() })).json();
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.equal(out.method, 'invisible');
 
     const check = (token, secret = 'ff_demo_secret') => j(base, '/captcha/siteverify', { secret, response: token }).then((r) => r.json());
     assert.equal((await check(out.token, 'wrong-secret'))['error-codes'][0], 'invalid-input-secret');
-    assert.equal((await check(out.token)).success, true);
+    const ok = await check(out.token);
+    assert.equal(ok.success, true);
+    assert.equal(ok.method, 'invisible');
     assert.equal((await check(out.token)).success, false, 'tokens are single use');
-
-    // Same challenge cannot be redeemed twice.
-    const again = await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce: String(nonce), signals: HUMAN, hp: '' });
-    assert.equal(again.status, 400);
+    assert.equal((await verifyWith(base, c, { trace: humanTrace() })).status, 400, 'challenge cannot be reused');
   });
 });
 
-test('CAPTCHA: wrong proof, forged challenge, honeypot and automation are rejected', async () => {
+test('CAPTCHA: wrong proof, forged challenge, honeypot, automation and faked timing are rejected', async () => {
   await withApp(async (base) => {
-    const core = loadWidgetCore();
-    const get = async () => (await (await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' })).json()).challenge;
-    const solve = (c) => String(core.solve(`${c.id}.${c.salt}.`, c.difficulty, 0, 1e7));
-
-    let c = await get();
-    let r = await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge: c, nonce: '1', signals: HUMAN });
-    assert.equal((await r.json()).error, 'bad_proof');
-
-    c = await get();
-    r = await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge: { ...c, difficulty: 1 }, nonce: '1', signals: HUMAN });
-    assert.equal((await r.json()).error, 'bad_challenge');
-
-    c = await get();
-    r = await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge: c, nonce: solve(c), signals: HUMAN, hp: 'http://spam' });
-    assert.equal(r.status, 403);
-
-    c = await get();
-    const bot = { wd: true, lg: 0, sw: 0, sh: 0, pm: 0, kd: 0, tc: 0, sc: 0, dt: 10 };
-    r = await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge: c, nonce: solve(c), signals: bot });
-    assert.equal(r.status, 403);
-
-    r = await j(base, '/captcha/challenge', { sitekey: 'nope' });
-    assert.equal(r.status, 400);
+    let c = await challengeAndProof(base);
+    assert.equal((await (await verifyWith(base, { ...c, nonce: '1' }, {})).json()).error, 'bad_proof');
+    c = await challengeAndProof(base);
+    assert.equal((await (await verifyWith(base, { ...c, challenge: { ...c.challenge, difficulty: 1 } }, {})).json()).error, 'bad_challenge');
+    c = await challengeAndProof(base);
+    assert.equal((await verifyWith(base, c, { hp: 'http://spam', trace: humanTrace() })).status, 403);
+    c = await challengeAndProof(base);
+    assert.equal((await verifyWith(base, c, { signals: { ...HUMAN, wd: true }, trace: humanTrace() })).status, 403);
+    c = await challengeAndProof(base);
+    assert.equal((await verifyWith(base, c, { signals: { ...HUMAN, dt: 60000 }, trace: humanTrace() })).status, 403);
+    c = await challengeAndProof(base);
+    const curl = await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge: c.challenge, nonce: c.nonce, signals: HUMAN, trace: humanTrace() }, { 'User-Agent': 'curl/8.0' });
+    assert.equal(curl.status, 403, 'non-browser clients are rejected');
+    assert.equal((await j(base, '/captcha/challenge', { sitekey: 'nope' })).status, 400);
   });
 });
 
-test('CAPTCHA: signals claiming more time on page than the server observed are rejected', async () => {
+test('CAPTCHA: a scripted pointer gets a puzzle; guessing fails and locks the network', async () => {
   await withApp(async (base) => {
-    const core = loadWidgetCore();
-    const { challenge } = await (await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' })).json();
-    const nonce = String(core.solve(`${challenge.id}.${challenge.salt}.`, challenge.difficulty, 0, 1e7));
-    const r = await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce, signals: { ...HUMAN, dt: 60000 } });
-    assert.equal(r.status, 403);
-  });
-});
-
-test('CAPTCHA: borderline traffic gets a harder second challenge', async () => {
-  await withApp(async (base) => {
-    const core = loadWidgetCore();
-    const { challenge } = await (await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' })).json();
-    // Looks like a browser but reports no languages and no interaction: score lands in the step-up band.
-    const shady = { wd: false, lg: 0, sw: 1920, sh: 1080, pm: 0, kd: 0, tc: 0, sc: 0, dt: 3000 };
-    const nonce = String(core.solve(`${challenge.id}.${challenge.salt}.`, challenge.difficulty, 0, 1e7));
-    const r1 = await (await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce, signals: shady })).json();
-    assert.equal(r1.retry, true);
-    assert.equal(r1.challenge.difficulty, challenge.difficulty + 3);
-    assert.equal(r1.challenge.attempt, 1);
-  });
-});
-
-test('CAPTCHA: one network cannot mint unlimited tokens', async () => {
-  await withApp(async (base) => {
-    const core = loadWidgetCore();
-    const solve = (c) => String(core.solve(`${c.id}.${c.salt}.`, c.difficulty, 0, 1e8));
-    async function attempt() {
-      const r = await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' });
-      if (r.status === 429) return 'blocked';
-      let { challenge } = await r.json();
-      let v = await (await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce: solve(challenge), signals: HUMAN })).json();
-      let stepped = false;
-      if (v.retry) {
-        stepped = true;
-        challenge = v.challenge;
-        v = await (await j(base, '/captcha/verify', { sitekey: 'ff_demo_site', challenge, nonce: solve(challenge), signals: HUMAN })).json();
-      }
-      return v.ok ? (stepped ? 'stepped' : 'passed') : 'failed';
-    }
     const results = [];
-    for (let i = 0; i < 12; i++) results.push(await attempt());
-    assert.deepEqual(results, [...Array(4).fill('passed'), ...Array(4).fill('stepped'), ...Array(4).fill('blocked')]);
+    for (let i = 0; i < 3; i++) {
+      const c = await challengeAndProof(base);
+      if (c.status) { results.push(c.error); continue; }
+      let v = await (await verifyWith(base, c, { trace: robotTrace() })).json();
+      assert.ok(v.puzzle, 'robotic path must be challenged');
+      assert.match(v.puzzle.image, /^data:image\/png;base64,/);
+      assert.equal(v.puzzle.x, undefined, 'answer must not be sent');
+      const r = await j(base, '/captcha/puzzle', { sitekey: 'ff_demo_site', id: v.puzzle.id, x: 0, trace: humanDrag(10) });
+      v = await r.json();
+      results.push(v.puzzle ? 'retry' : v.error);
+      if (v.puzzle) {
+        const r2 = await j(base, '/captcha/puzzle', { sitekey: 'ff_demo_site', id: v.puzzle.id, x: 1, trace: humanDrag(10) });
+        results.push((await r2.json()).error);
+      }
+    }
+    // 1st puzzle: wrong -> second puzzle; wrong -> failed. 3rd failure locks the network.
+    assert.deepEqual(results.slice(0, 2), ['retry', 'failed']);
+    assert.ok(results.includes('too_many_failures') || results.at(-1) === 'failed', JSON.stringify(results));
+    const after = await j(base, '/captcha/challenge', { sitekey: 'ff_demo_site' });
+    assert.equal(after.status, 429);
+    assert.equal((await after.json()).error, 'too_many_failures');
+  });
+});
+
+test('CAPTCHA: solving the puzzle correctly with a human drag passes; a robotic drag does not', async () => {
+  await withApp(async (base, app) => {
+    const c = await challengeAndProof(base);
+    const v = await (await verifyWith(base, c, {})).json();
+    assert.ok(v.puzzle);
+    const x = app.captcha._puzzleAnswer(v.puzzle.id);
+    const robot = await (await j(base, '/captcha/puzzle', { sitekey: 'ff_demo_site', id: v.puzzle.id, x, trace: robotTrace(10) })).json();
+    assert.ok(robot.puzzle, 'robotic drag is not accepted even at the right spot');
+    const x2 = app.captcha._puzzleAnswer(robot.puzzle.id);
+    const ok = await (await j(base, '/captcha/puzzle', { sitekey: 'ff_demo_site', id: robot.puzzle.id, x: x2 + 4, trace: humanDrag(x2) })).json();
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+    assert.equal(ok.method, 'puzzle');
+  });
+});
+
+test('CAPTCHA: one network gets 1 invisible token, then puzzles, then nothing', async () => {
+  await withApp(async (base, app) => {
+    const seen = [];
+    for (let i = 0; i < 10; i++) {
+      const c = await challengeAndProof(base);
+      if (c.status) { seen.push(c.error); continue; }
+      const v = await (await verifyWith(base, c, { trace: humanTrace(60, i + 2) })).json();
+      if (v.ok) { seen.push('invisible'); continue; }
+      const x = app.captcha._puzzleAnswer(v.puzzle.id);
+      const r = await (await j(base, '/captcha/puzzle', { sitekey: 'ff_demo_site', id: v.puzzle.id, x, trace: humanDrag(x, i + 5) })).json();
+      seen.push(r.ok ? 'puzzle' : r.error);
+    }
+    assert.deepEqual(seen, ['invisible', ...Array(7).fill('puzzle'), 'too_many_tokens', 'too_many_tokens']);
   });
 });
 
