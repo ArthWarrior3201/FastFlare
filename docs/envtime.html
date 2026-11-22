@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FastFlare EnvTime</title>
+<title>EnvTime setup · FastFlare</title>
+<meta name="description" content="Run your own accurate time server and point Windows, macOS or Linux at it. Setup takes about ten minutes.">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -18,91 +19,110 @@
   </nav>
 </header>
 <main>
-  <h1>EnvTime, <em>time by majority vote</em></h1>
-  <p class="lead">Asks several public time servers over NTP, drops any that disagree with the majority, and serves the agreed time over HTTP for any time zone and over NTP so Windows can use it as a time server.</p>
+  <h1>EnvTime <em>setup guide</em></h1>
+  <p class="lead">Your own accurate time server. Point Windows, macOS or Linux at it, or read the time for any time zone from a simple web API. About ten minutes from nothing to synced.</p>
 
-  <h2>How it stays precise</h2>
+  <div class="grid">
+    <div class="card"><h3>Precise</h3><p>Combines several of the internet's most trusted time sources and compensates for network delay, so results are typically within a few milliseconds.</p></div>
+    <div class="card"><h3>Always current</h3><p>The clock is tracked continuously in the background. Every request is answered instantly, with no lookup delay.</p></div>
+    <div class="card"><h3>Lightweight</h3><p>One small Node process. Runs comfortably on a 1 GB free-tier cloud server.</p></div>
+  </div>
+
+  <h2>What you need</h2>
   <ul>
-    <li><strong>Parallel queries.</strong> Each round asks every upstream (default: <code>time.google.com</code>, <code>time.apple.com</code>, <code>time.windows.com</code>, <code>time.cloudflare.com</code>, <code>time.nist.gov</code>, <code>pool.ntp.org</code>) at once.</li>
-    <li><strong>Doesn't wait for slow ones.</strong> As soon as 3 have answered, it gives the rest 60 ms, then leaves any still pending. A hard 1.2 s limit applies if fewer answer.</li>
-    <li><strong>Majority vote.</strong> It takes the median offset. Any provider further from it than 50 ms (plus half its own round trip) is kicked for that round only and will be asked again next round. No majority means the round is discarded and the previous time keeps running.</li>
-    <li><strong>Latency compensation.</strong> Every sample uses the NTP four-timestamp offset <code>((T2-T1)+(T3-T4))/2</code>, which cancels the network delay.</li>
-    <li><strong>Always tracking.</strong> A background loop re-syncs about every 32 s with jitter, and a request just reads the live clock (monotonic time plus the tracked offset and drift). Answering needs no network call, so a request is served in microseconds and can't be slowed or made inaccurate by upstream latency. Add <code>?fresh=1</code> to force an extra round (rate-limited to one per 2 s).</li>
+    <li>A Linux server (Ubuntu or Debian) with a public IP address. A free Oracle Cloud server works; steps are below.</li>
+    <li>Inbound <strong>UDP 123</strong> (time) and <strong>TCP 8787</strong> (web API) allowed to that server.</li>
   </ul>
-  <div class="note"><strong>About <code>time.is</code>.</strong> It is a website, not an NTP server, so it can't be part of the vote. Web time checks only have one-second resolution, which is too coarse to outvote NTP servers accurate to milliseconds. Add more NTP hosts with <code>FF_TIME_PROVIDERS</code> instead.</div>
-  <div class="note"><strong>Expected accuracy.</strong> Typically a few milliseconds over a normal internet connection. The <code>uncertaintyMs</code> field in every reply is the honest bound for that moment. It is not atomic-clock timekeeping.</div>
 
-  <h2>HTTP API</h2>
+  <h2>Set up the server</h2>
+  <ol class="steps">
+    <li><strong>Create a server</strong>
+      Use any Ubuntu or Debian server. On Oracle Cloud Always Free: <em>Compute → Instances → Create instance</em>, image <strong>Canonical Ubuntu 22.04 Minimal</strong>, shape <strong>VM.Standard.E2.1.Micro</strong>, let it create a new public network, and download the SSH key it generates. When it shows <em>Running</em>, copy its <strong>Public IP address</strong>.
+    </li>
+    <li><strong>Allow the two ports in the cloud firewall</strong>
+      On Oracle Cloud: open the instance, click its subnet, then <em>Default Security List → Add Ingress Rules</em>. Add two rules with source <code>0.0.0.0/0</code>:
+      <table>
+        <tr><th>Protocol</th><th>Destination port</th></tr>
+        <tr><td>UDP</td><td>123</td></tr>
+        <tr><td>TCP</td><td>8787</td></tr>
+      </table>
+    </li>
+    <li><strong>Connect to the server</strong>
+<pre><code>ssh -i path/to/your-key.key ubuntu@YOUR.SERVER.IP</code></pre>
+      On Windows, first run <code>icacls "path\to\your-key.key" /inheritance:r /grant:r "%USERNAME%:R"</code> so SSH accepts the key.
+    </li>
+    <li><strong>Run the installer</strong>
+      One command installs everything: Node.js, a 4 GB swap file on small servers, the server's own firewall rules, and a background service that starts on boot.
+<pre><code>curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.sh | sudo bash</code></pre>
+      When it finishes it prints your server's address and the exact commands for Windows. Add <code>FF_PROVIDER=Oracle FF_CITY=Hyderabad</code> before <code>sudo bash</code> to label the node in the speed test list.
+    </li>
+    <li><strong>Check that it works</strong>
+      Open this in a browser (use your IP):
+<pre><code>http://YOUR.SERVER.IP:8787/time?tz=Asia/Kolkata</code></pre>
+      The reply should contain <code>"synced": true</code>. If the page does not load, recheck step 2.
+    </li>
+  </ol>
+
+  <h2>Point your devices at it</h2>
+
+  <h3>Windows</h3>
+  <p>Open Command Prompt <strong>as administrator</strong> and run (replace the IP):</p>
+<pre><code>w32tm /config /manualpeerlist:"YOUR.SERVER.IP,0x8" /syncfromflags:manual /reliable:no /update
+net stop w32time && net start w32time
+w32tm /resync /force</code></pre>
+  <p>Confirm with <code>w32tm /query /status</code> (the source should be your server) and <code>w32tm /stripchart /computer:YOUR.SERVER.IP /samples:5 /dataonly</code>, which prints the difference between your PC and the server in seconds. To go back to Windows' default source later: <code>w32tm /config /manualpeerlist:"time.windows.com,0x8" /syncfromflags:manual /update</code>, then restart the Windows Time service.</p>
+
+  <h3>macOS</h3>
+  <p><em>System Settings → General → Date &amp; Time → Source → Set</em>, then enter your server's IP address. Or from Terminal: <code>sudo systemsetup -setnetworktimeserver YOUR.SERVER.IP</code>.</p>
+
+  <h3>Linux</h3>
+  <p>With chrony, add <code>server YOUR.SERVER.IP iburst</code> to <code>/etc/chrony/chrony.conf</code> and run <code>sudo systemctl restart chrony</code>. With systemd-timesyncd, set <code>NTP=YOUR.SERVER.IP</code> in <code>/etc/systemd/timesyncd.conf</code> and run <code>sudo systemctl restart systemd-timesyncd</code>.</p>
+
+  <h2>Web API</h2>
 <pre><code>GET /time?tz=Asia/Kolkata
 
 {
   "unixMs": 1795347120123,
-  "unix": 1795347120,
   "utc": "2026-11-22T09:32:00.123Z",
   "timeZone": "Asia/Kolkata",
   "abbreviation": "GMT+5:30",
   "offsetMinutes": 330,
   "local": "2026-11-22T15:02:00.123+05:30",
   "synced": true,
-  "uncertaintyMs": 4.3,
-  "sources": { "used": ["time.google.com", "time.apple.com", "time.windows.com"], "kicked": [] }
+  "uncertaintyMs": 4.3
 }</code></pre>
-  <p><code>tz</code> is any IANA zone (<code>America/New_York</code>, <code>Europe/London</code>, <code>UTC</code>). It defaults to UTC. Unknown zones return 400. <code>GET /time/status</code> shows the last round: which providers were used, kicked, failed or skipped as slow, the tracked offset and drift.</p>
+  <p><code>tz</code> is any IANA time zone name (<code>America/New_York</code>, <code>Europe/London</code>, <code>UTC</code>) and defaults to UTC. <code>uncertaintyMs</code> is the current error bound. Add <code>?fresh=1</code> to trigger an extra sync before answering (limited to one every 2 seconds). <code>GET /time/status</code> reports sync health.</p>
+<pre><code>// JavaScript
+const t = await (await fetch('http://YOUR.SERVER.IP:8787/time?tz=Asia/Kolkata')).json();
+console.log(t.local);</code></pre>
 
-  <h2>Use it as your Windows time server</h2>
-  <p>Windows speaks NTP on <strong>UDP port 123</strong> only, so FastFlare's NTP server must listen there. Run it on a Linux host or container with that port reachable:</p>
-<pre><code>docker run -d --name fastflare -p 8787:8787 -p 123:123/udp -e FF_SECRET=... fastflare
-# or: sudo setcap 'cap_net_bind_service=+ep' $(which node)  &amp;&amp;  node src/server.js</code></pre>
-  <p>Then, in an <strong>administrator</strong> Command Prompt on the Windows machine (replace the host):</p>
-<pre><code>w32tm /config /manualpeerlist:"time.example.com,0x8" /syncfromflags:manual /reliable:no /update
-net stop w32time &amp;&amp; net start w32time
-w32tm /resync /force
-w32tm /query /status
-w32tm /stripchart /computer:time.example.com /samples:5 /dataonly</code></pre>
-  <p>The last command prints the offset between that PC and FastFlare, so you can see it working. Don't run FastFlare's NTP server on the same Windows machine as <code>w32time</code>: both want UDP 123. Run it elsewhere (a small VPS or a Linux box).</p>
-  <p>Linux with chrony: add <code>server time.example.com iburst</code> to <code>chrony.conf</code>.</p>
-  <p>Until the first round succeeds, the NTP server answers as "unsynchronized" (stratum 16), so clients ignore it instead of trusting a guess.</p>
-
-  <h2>No UDP? Host it on the web and sync Windows over HTTPS</h2>
-  <p>Most free web hosts (Render, Vercel, Koyeb and similar) only expose HTTP, so Windows' built-in NTP client can't use them. Host FastFlare there anyway (set <code>FF_NTP=0</code>) and let Windows pull the time over HTTPS with the included script. In an <strong>administrator PowerShell</strong>:</p>
+  <h2>No UDP? Use a web host</h2>
+  <p>Some hosts (Render, Vercel and similar) only provide HTTP, which Windows cannot use as a time source directly. Deploy FastFlare there (the repository includes a <code>render.yaml</code>) and sync Windows over HTTPS instead. In an administrator PowerShell:</p>
 <pre><code>powershell -ExecutionPolicy Bypass -File windows-sync.ps1 -Server https://your-app.onrender.com -Install</code></pre>
-  <p>It takes 5 samples, keeps the one with the shortest round trip, adds half that round trip, and steps the clock only if it is more than 50 ms off. <code>-Install</code> adds a scheduled task that repeats every 15 minutes. Remove it with <code>-Uninstall</code>. The script is in <a href="https://github.com/ArthWarrior3201/FastFlare/blob/main/tools/windows-sync.ps1"><code>tools/windows-sync.ps1</code></a>. The repo's <code>render.yaml</code> deploys the web side to Render in one step.</p>
-  <div class="note">This is less precise than real NTP (tens of milliseconds, not a few) because HTTP round trips are noisy, and free hosts sleep when idle so the first request can be slow. It is good enough to keep a PC's clock correct.</div>
+  <p>The script, <a href="https://github.com/ArthWarrior3201/FastFlare/blob/main/tools/windows-sync.ps1"><code>tools/windows-sync.ps1</code></a>, corrects the clock every 15 minutes. Expect tens of milliseconds of accuracy with this method, compared with a few using the server above.</p>
 
-  <h2>Configuration</h2>
+  <h2>Updating</h2>
+  <p>Run the installer command again. It updates the code, keeps your settings and restarts the service. Logs: <code>sudo journalctl -u fastflare -f</code>.</p>
+
+  <h2>Settings</h2>
+  <p>Stored in <code>/etc/fastflare.env</code> on the server. Restart with <code>sudo systemctl restart fastflare</code> after editing.</p>
   <table>
     <tr><th>Variable</th><th>Default</th><th>Meaning</th></tr>
-    <tr><td><code>FF_TIME_PROVIDERS</code></td><td>the six above</td><td>Comma-separated <code>host</code> or <code>host:port</code>.</td></tr>
-    <tr><td><code>FF_TIME_MIN_VOTES</code></td><td>3</td><td>Answers needed before the grace window starts.</td></tr>
-    <tr><td><code>FF_TIME_GRACE_MS</code></td><td>60</td><td>Extra wait for stragglers after the minimum is met.</td></tr>
-    <tr><td><code>FF_TIME_TIMEOUT_MS</code></td><td>1200</td><td>Hard limit for a round.</td></tr>
-    <tr><td><code>FF_TIME_TOLERANCE_MS</code></td><td>50</td><td>How far from the median a provider may be before it is kicked.</td></tr>
-    <tr><td><code>FF_TIME_POLL_MS</code></td><td>32000</td><td>Background re-sync interval. Public servers rate-limit abusive polling, so don't set this too low.</td></tr>
-    <tr><td><code>NTP_PORT</code> / <code>FF_NTP=0</code></td><td>123</td><td>UDP port for serving NTP, or disable it.</td></tr>
+    <tr><td><code>FF_TIME_PROVIDERS</code></td><td>Google, Apple, Windows, Cloudflare, NIST, pool.ntp.org</td><td>Comma-separated list of upstream NTP hosts (<code>host</code> or <code>host:port</code>).</td></tr>
+    <tr><td><code>FF_TIME_POLL_MS</code></td><td>32000</td><td>How often the clock is re-checked in the background.</td></tr>
+    <tr><td><code>FF_TIME_TOLERANCE_MS</code></td><td>50</td><td>Maximum disagreement between sources before one is set aside for that check.</td></tr>
+    <tr><td><code>NTP_PORT</code></td><td>123</td><td>UDP port for the time server. Set <code>FF_NTP=0</code> to turn the NTP server off and keep the web API only.</td></tr>
+    <tr><td><code>PORT</code></td><td>8787</td><td>Web API port.</td></tr>
   </table>
-  <p>Google's time servers "smear" leap seconds while others step them. Around a leap second they can disagree by up to half a second; the majority vote handles that by kicking the odd ones out.</p>
 
-  <h2>Try it</h2>
-  <div class="card">
-    <label for="api">FastFlare server URL</label>
-    <input id="api" size="36" placeholder="http://localhost:8787">
-    <label for="tz" style="margin-top:10px">Time zone</label>
-    <input id="tz" value="Asia/Kolkata" size="24">
-    <button class="btn" id="go" style="margin-left:8px">Get time</button>
-    <pre id="out" style="min-height:90px">…</pre>
-  </div>
-  <script>
-    var api = document.getElementById('api');
-    if (location.protocol !== 'file:' && !/github\.io$/.test(location.hostname)) api.value = location.origin;
-    document.getElementById('go').onclick = function () {
-      var out = document.getElementById('out');
-      out.textContent = 'Asking…';
-      fetch(api.value.replace(/\/$/, '') + '/time?tz=' + encodeURIComponent(document.getElementById('tz').value))
-        .then(function (r) { return r.json(); })
-        .then(function (j) { out.textContent = JSON.stringify(j, null, 2); })
-        .catch(function (e) { out.textContent = 'Could not reach that server: ' + e.message; });
-    };
-  </script>
+  <h2>Troubleshooting</h2>
+  <table>
+    <tr><th>Problem</th><th>Fix</th></tr>
+    <tr><td>The web API does not load</td><td>Check the TCP 8787 rule in your cloud firewall, then <code>sudo systemctl status fastflare</code>.</td></tr>
+    <tr><td><code>"synced": false</code> for more than a minute</td><td>The server cannot reach public time servers. Check outbound UDP 123 and run <code>sudo journalctl -u fastflare -n 50</code>.</td></tr>
+    <tr><td>Windows: "no time data available" or the stripchart times out</td><td>Check the UDP 123 rule in your cloud firewall. Some office or school networks block NTP; try another network.</td></tr>
+    <tr><td>Installer says port 123 is busy</td><td>Another time service owns it. Stop it (<code>sudo systemctl disable --now chrony</code>) and restart FastFlare.</td></tr>
+  </table>
 </main>
 <footer>FastFlare · <a href="https://github.com/ArthWarrior3201/FastFlare">source on GitHub</a></footer>
 </body>

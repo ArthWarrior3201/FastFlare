@@ -29,7 +29,7 @@
     <li>The server returns a short-lived, single-use token. Your backend exchanges it at <code>/captcha/siteverify</code>.</li>
   </ol>
   <p>Difficulty rises automatically for any network that requests many challenges per minute.</p>
-  <div class="note"><strong>Be realistic about what this is.</strong> No CAPTCHA stops a determined attacker who is willing to pay. Proof-of-work and signals raise the cost of abuse and stop lazy scripts, scrapers and credential-stuffing at low effort, but the signals come from the client and can be forged. Pair it with rate limits on sensitive endpoints.</div>
+  <div class="note"><strong>Security notes.</strong> Proof-of-work and behaviour signals make automated abuse expensive and stop most scripted traffic, but no CAPTCHA is absolute. Behaviour signals are reported by the browser, so treat them as one layer: combine FastFlare with rate limits on sensitive endpoints such as sign-in and checkout.</div>
 
   <h2>1 · Create site keys</h2>
   <p>Create <code>config/sites.json</code> on your FastFlare server (it is git-ignored). Use long random secrets.</p>

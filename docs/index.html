@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FastFlare: bot protection, speed test and time server in one</title>
-<meta name="description" content="CAPTCHA without picture puzzles, a provider-and-city speed test, and a consensus NTP time server. One zero-dependency Node service.">
+<title>FastFlare · bot protection, speed test and time server</title>
+<meta name="description" content="Image-free bot protection, a provider and city speed test, and a precise time server. One lightweight service you host yourself.">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -19,45 +19,52 @@
   </nav>
 </header>
 <main>
-  <h1>Three tools. <em>One tiny server.</em></h1>
-  <p class="lead">Stop bots without making people click traffic lights, measure real speed to a chosen provider and city, and run a time server that agrees with the internet's majority. No dependencies, one <code>node</code> process.</p>
+  <h1>Fast, private infrastructure tools. <em>One small server.</em></h1>
+  <p class="lead">Protect forms without picture puzzles, measure real connection speed to a provider and city you choose, and run your own precise time server. Self-hosted, dependency-free, and light enough for a free-tier VM.</p>
+  <div class="hero-actions">
+    <a class="btn" href="envtime.html">Set up EnvTime</a>
+    <a class="btn ghost" href="captcha.html">Add the CAPTCHA</a>
+    <a class="btn ghost" href="speedtest-app.html">Try the speed test</a>
+  </div>
 
   <div class="grid">
     <div class="card">
-      <h3>1 · Bot protection</h3>
-      <p>Invisible proof-of-work plus behaviour signals. No "select all squares with a bus". Drop-in widget and a one-call server check.</p>
-      <a class="more" href="captcha.html">Integrate it →</a>
+      <h3>Bot protection</h3>
+      <p>Invisible verification that replaces "select all the traffic lights". A drop-in widget and a single server-side check.</p>
+      <a class="more" href="captcha.html">Integration guide →</a>
     </div>
     <div class="card">
-      <h3>2 · Speed test</h3>
-      <p>Choose a provider, then a city it runs in, and test download, upload, latency and jitter against that exact server, with graphs.</p>
-      <a class="more" href="speedtest.html">Integrate it →</a>
+      <h3>Speed test</h3>
+      <p>Visitors choose a provider and a city, then measure download, upload, latency and jitter against that exact server.</p>
+      <a class="more" href="speedtest.html">Integration guide →</a>
     </div>
     <div class="card">
-      <h3>3 · EnvTime</h3>
-      <p>Asks Google, Apple, Windows and more over NTP, kicks any that disagree with the majority, then serves precise time over HTTP and NTP. Windows can use it as its time server.</p>
-      <a class="more" href="envtime.html">Set it up →</a>
+      <h3>EnvTime</h3>
+      <p>A precise time server for Windows, macOS and Linux, plus a web API that returns the current time in any time zone.</p>
+      <a class="more" href="envtime.html">Setup guide →</a>
     </div>
   </div>
 
-  <h2>Run it</h2>
+  <h2>Get started</h2>
+  <p>On any Ubuntu or Debian server, one command installs and starts everything:</p>
+<pre><code>curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.sh | sudo bash</code></pre>
+  <p>Prefer to run it by hand? It needs only Node.js 20 or newer and has nothing to install:</p>
 <pre><code>git clone https://github.com/ArthWarrior3201/FastFlare.git
 cd FastFlare
-FF_SECRET=$(openssl rand -hex 32) node src/server.js
-# HTTP on :8787. NTP on udp/123 needs privileges: use NTP_PORT=1230 to try it unprivileged.</code></pre>
-  <p>Node 20 or newer. Nothing to <code>npm install</code>. The same server hosts these docs, the widget (<code>/fastflare.js</code>), the speed test client (<code>/fastflare-speedtest.js</code>) and the live demos.</p>
+FF_SECRET=$(openssl rand -hex 32) node src/server.js</code></pre>
+  <p>The server also hosts this documentation, the widget (<code>/fastflare.js</code>), the speed test client (<code>/fastflare-speedtest.js</code>) and the live demos.</p>
 
   <h2>Configuration</h2>
   <table>
-    <tr><th>Variable</th><th>Meaning</th></tr>
-    <tr><td><code>PORT</code>, <code>HOST</code></td><td>HTTP listen address (default <code>8787</code>, <code>0.0.0.0</code>).</td></tr>
-    <tr><td><code>FF_SECRET</code></td><td>Signing secret for CAPTCHA challenges and tokens. Set it, or tokens die on restart.</td></tr>
-    <tr><td><code>config/sites.json</code></td><td>Your CAPTCHA site keys and secrets. See <a href="captcha.html">CAPTCHA docs</a>.</td></tr>
-    <tr><td><code>FF_PROVIDER</code>, <code>FF_CITY</code>, <code>FF_COUNTRY</code>, <code>FF_PUBLIC_URL</code></td><td>What this node is, for the speed test list. See <a href="speedtest.html">Speed Test docs</a>.</td></tr>
-    <tr><td><code>config/servers.json</code></td><td>Other speed test nodes this registry should list.</td></tr>
-    <tr><td><code>NTP_PORT</code>, <code>FF_NTP=0</code></td><td>UDP port for the NTP server (default 123), or switch it off.</td></tr>
-    <tr><td><code>FF_TIME_PROVIDERS</code></td><td>Comma-separated upstream NTP hosts. See <a href="envtime.html">EnvTime docs</a>.</td></tr>
-    <tr><td><code>TRUST_PROXY=1</code></td><td>Read the client IP from <code>CF-Connecting-IP</code> / <code>X-Forwarded-For</code> when behind a proxy.</td></tr>
+    <tr><th>Setting</th><th>Meaning</th></tr>
+    <tr><td><code>PORT</code>, <code>HOST</code></td><td>Web API listen address (default <code>8787</code>).</td></tr>
+    <tr><td><code>FF_SECRET</code></td><td>Signing secret for CAPTCHA tokens. The installer generates one.</td></tr>
+    <tr><td><code>config/sites.json</code></td><td>Your CAPTCHA site keys. See the <a href="captcha.html">CAPTCHA guide</a>.</td></tr>
+    <tr><td><code>FF_PROVIDER</code>, <code>FF_CITY</code>, <code>FF_COUNTRY</code>, <code>FF_PUBLIC_URL</code></td><td>Label this server for the speed test list. See the <a href="speedtest.html">speed test guide</a>.</td></tr>
+    <tr><td><code>config/servers.json</code></td><td>Other speed test servers to list.</td></tr>
+    <tr><td><code>NTP_PORT</code>, <code>FF_NTP=0</code></td><td>Time server UDP port (default 123), or turn it off.</td></tr>
+    <tr><td><code>FF_TIME_PROVIDERS</code></td><td>Upstream time sources. See the <a href="envtime.html">EnvTime guide</a>.</td></tr>
+    <tr><td><code>TRUST_PROXY=1</code></td><td>Read the visitor IP from proxy headers when running behind one.</td></tr>
   </table>
 </main>
 <footer>FastFlare · <a href="https://github.com/ArthWarrior3201/FastFlare">source on GitHub</a></footer>

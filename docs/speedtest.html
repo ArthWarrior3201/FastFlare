@@ -35,7 +35,7 @@ FF_PUBLIC_URL="https://fra.speed.example.com" node src/server.js</code></pre>
   { "provider": "Google Cloud", "city": "Singapore", "country": "SG", "url": "https://sin.speed.example.com" }
 ]</code></pre>
   <p>The registry's own <code>FF_PROVIDER</code> / <code>FF_CITY</code> are listed too. The city dropdown only shows cities where the chosen provider has a node, because it is built from this list. Nodes need HTTPS if the page using them is HTTPS, and every node sends CORS headers so the browser can talk to any of them.</p>
-  <div class="note">Each node serves test traffic for anyone who asks, capped per request by <code>FF_MAX_BYTES</code> (default 100 MB). Put a bandwidth cap or rate limit in front of public nodes.</div>
+  <div class="note">Public nodes serve test traffic to any visitor. Each request is capped by <code>FF_MAX_BYTES</code> (default 100 MB); add a bandwidth limit at your provider if you want a monthly ceiling.</div>
 
   <h2>Embed it in your app</h2>
 <pre><code>&lt;script src="https://YOUR-REGISTRY-HOST/fastflare-speedtest.js"&gt;&lt;/script&gt;

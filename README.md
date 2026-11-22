@@ -8,7 +8,17 @@ Three tools in one zero-dependency Node service (Node 20+):
 
 Documentation and integration guides: **https://arthwarrior3201.github.io/FastFlare/**
 
-## Run
+## Install on a server (one command)
+
+On Ubuntu or Debian (for example a free Oracle Cloud VM), open inbound **UDP 123** and **TCP 8787** in the cloud firewall, then:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.sh | sudo bash
+```
+
+It installs Node.js, swap (on small servers), firewall rules and a boot-time service, then prints the Windows commands. Full walkthrough: the [EnvTime setup guide](https://arthwarrior3201.github.io/FastFlare/envtime.html).
+
+## Run manually
 
 ```sh
 FF_SECRET=$(openssl rand -hex 32) node src/server.js
