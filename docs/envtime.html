@@ -63,6 +63,17 @@
     </li>
   </ol>
 
+  <h2>Run the server on macOS or Windows instead</h2>
+  <p>No cloud server? Any always-on computer on your network can host FastFlare. Other devices on the same network then use that computer's address as their time server.</p>
+  <h3>macOS</h3>
+<pre><code>curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.command | bash</code></pre>
+  <p>Or download <a href="https://github.com/ArthWarrior3201/FastFlare/blob/main/deploy/install.command"><code>install.command</code></a> and double-click it (if macOS blocks it, run <code>chmod +x install.command</code> first or use <code>bash install.command</code>). It installs Node.js if needed and sets up a background service that starts at boot. If macOS asks about incoming connections for "node", choose <strong>Allow</strong>.</p>
+  <h3>Windows</h3>
+  <p>Open PowerShell <strong>as administrator</strong> and run:</p>
+<pre><code>irm https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.ps1 | iex</code></pre>
+  <p>Or download <a href="https://github.com/ArthWarrior3201/FastFlare/blob/main/deploy/install.cmd"><code>install.cmd</code></a> and double-click it. It installs Node.js if needed, opens the firewall ports and starts FastFlare at every boot. To make a Windows PC take its time from an existing FastFlare server in one step, run <code>install.cmd -Client SERVER.IP</code>. To remove FastFlare: <code>install.cmd -Uninstall</code>.</p>
+  <p>The PC running FastFlare cannot use itself as its own time source; point your other devices at its address instead.</p>
+
   <h2>Point your devices at it</h2>
 
   <h3>Windows</h3>

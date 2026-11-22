@@ -16,7 +16,7 @@ On Ubuntu or Debian (for example a free Oracle Cloud VM), open inbound **UDP 123
 curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.sh | sudo bash
 ```
 
-It installs Node.js, swap (on small servers), firewall rules and a boot-time service, then prints the Windows commands. Full walkthrough: the [EnvTime setup guide](https://arthwarrior3201.github.io/FastFlare/envtime.html).
+It installs Node.js, swap (on small servers), firewall rules and a boot-time service, then prints the Windows commands. macOS: `curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.command | bash`. Windows (administrator PowerShell): `irm https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.ps1 | iex` (or double-click `deploy/install.cmd`). Full walkthrough: the [EnvTime setup guide](https://arthwarrior3201.github.io/FastFlare/envtime.html).
 
 ## Run manually
 
