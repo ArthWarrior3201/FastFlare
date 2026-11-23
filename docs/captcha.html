@@ -11,6 +11,7 @@
 <header class="nav">
   <a class="brand" href="index.html">Fast<span>Flare</span></a>
   <nav>
+    <a href="quickstart.html">Quick Start</a>
     <a href="captcha.html" aria-current="page">Bot Protection</a>
     <a href="envtime.html">Time Server (NTP)</a>
     <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
@@ -33,8 +34,12 @@
   <h3>Limits per Network</h3>
   <p>Over a rolling 10 minutes, each network address gets <code>FF_QUOTA_SOFT</code> invisible verifications (default 1); after that every verification needs the puzzle. At <code>FF_QUOTA_HARD</code> tokens (default 8) it stops issuing them (<code>429 too_many_tokens</code>). Three failed puzzles lock the address out for the rest of the window (<code>429 too_many_failures</code>). Sites whose visitors share one address (mobile carriers, offices, campuses) may want higher numbers.</p>
 
+  <h2>Fastest Way: Use the FastFlare Network</h2>
+  <p>You do not need your own FastFlare server. Create a site key on the <a href="quickstart.html">Quick Start</a> page, run the small gate backend anywhere, and the FastFlare network decides for every visitor whether to let them through, challenge them or block them. Visitors who pass are sent to your <code>redirect_to_if_pass</code> page; everyone else is asked to try again.</p>
+  <p>The rest of this guide covers running your own FastFlare server and wiring the widget into an existing form.</p>
+
   <h2>1 · Create Site Keys</h2>
-  <p>Create <code>config/sites.json</code> on your FastFlare server (it is git-ignored). Use long random secrets.</p>
+  <p>On the FastFlare network, use the <a href="quickstart.html">Quick Start</a> form. On your own server, create <code>config/sites.json</code> (it is git-ignored). Use long random secrets.</p>
 <pre><code>{
   "ff_site_3f9a1c": {
     "secret": "REPLACE_WITH_openssl_rand_-hex_32",
@@ -59,6 +64,8 @@
     <tr><td><code>data-sitekey</code></td><td>Required. Your site key.</td></tr>
     <tr><td><code>data-mode</code></td><td><code>checkbox</code> (default): verify when the visitor clicks "I'm not a robot". <code>auto</code>: start verifying as soon as the page loads, no click needed.</td></tr>
     <tr><td><code>data-api</code></td><td>FastFlare server URL. Defaults to the origin <code>fastflare.js</code> was loaded from.</td></tr>
+    <tr><td><code>data-verify</code></td><td>Your backend endpoint. After a pass the widget posts <code>{"token", "redirect"}</code> there and waits for <code>{"success": true, "redirect": "…"}</code>. A failure shows "Could not verify, try again". See the <a href="quickstart.html">Quick Start</a>.</td></tr>
+    <tr><td><code>data-redirect</code></td><td>The <code>redirect_to_if_pass</code> address, used with <code>data-verify</code>. Your backend's answer can override it.</td></tr>
     <tr><td><code>data-callback</code></td><td>Name of a global function called with the token.</td></tr>
     <tr><td><code>data-expired-callback</code>, <code>data-error-callback</code></td><td>Names of global functions.</td></tr>
     <tr><td><code>data-theme</code></td><td><code>light</code>, <code>dark</code> or <code>auto</code> (default).</td></tr>
@@ -140,6 +147,7 @@ if (empty($out['success'])) { http_response_code(400); exit; }</code></pre>
     <tr><td><code>POST /captcha/verify</code> <code>{sitekey, challenge, nonce, signals, trace, hp}</code></td><td>Browser</td><td>Checks the proof, signals and pointer path. Returns <code>{ok, token}</code>, <code>{ok:false, puzzle}</code> or 403/429.</td></tr>
     <tr><td><code>POST /captcha/puzzle</code> <code>{sitekey, id, x, trace | keys}</code></td><td>Browser</td><td>Checks a puzzle answer and the drag. Returns <code>{ok, token}</code>, a new puzzle, or 403/429.</td></tr>
     <tr><td><code>POST /captcha/siteverify</code> <code>{secret, response, remoteip?}</code></td><td>Your backend</td><td>Validates and consumes a token. Has no CORS headers on purpose, since it takes your secret.</td></tr>
+    <tr><td><code>POST /sites/register</code> <code>{name, origins}</code></td><td>Developer</td><td>Creates a site key and secret for the listed website addresses. Limited to 5 per network per day. Turn off with <code>FF_OPEN_SIGNUP=0</code>.</td></tr>
   </table>
   <p>Keep <code>FF_SECRET</code> stable and shared if you run several instances. Behind a proxy, set <code>TRUST_PROXY=1</code>.</p>
 </main>

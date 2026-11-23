@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { CORS, send, readBody, clientIp, httpError } from './util.js';
 import { createCaptcha } from './captcha.js';
+import { createSiteRegistry } from './sites.js';
 import { EnvTime, formatTime } from './envtime.js';
 import { startNtpServer } from './ntp.js';
 
@@ -31,6 +32,13 @@ export async function createApp(overrides = {}) {
     quotaSoft: config.quotaSoft,
     quotaHard: config.quotaHard,
     puzzleMinMs: config.puzzleMinMs,
+  });
+  const registry = createSiteRegistry({
+    sites: config.sites,
+    dataDir: config.dataDir,
+    open: config.openSignup,
+    perIpPerDay: config.signupsPerIpPerDay,
+    log,
   });
   const envtime = new EnvTime({ ...config.envtime, query: overrides.timeQuery, log });
 
@@ -116,6 +124,11 @@ export async function createApp(overrides = {}) {
         const r = captcha.solvePuzzle({ sitekey: b.sitekey, id: b.id, x: b.x, trace: b.trace, keys: b.keys, ip, origin: req.headers.origin });
         return send(res, 200, r, CORS);
       }
+      // Self-serve keys: anyone can create a site key for their own website addresses.
+      if (p === '/sites/register' && req.method === 'POST') {
+        const b = await readBody(req);
+        return send(res, 200, { ...registry.register({ name: b.name, origins: b.origins, ip }), api: config.publicUrl || '' }, CORS);
+      }
       // Server-to-server only: deliberately no CORS headers (it takes your secret key).
       if (p === '/captcha/siteverify' && req.method === 'POST') {
         const b = await readBody(req);
@@ -132,7 +145,7 @@ export async function createApp(overrides = {}) {
       if (res.headersSent) return res.destroy();
       const status = e.status || 500;
       if (status === 500) console.error(e);
-      send(res, status, { error: e.code || 'internal_error', ...(e.reasons && config.debug ? { reasons: e.reasons } : {}) }, CORS);
+      send(res, status, { error: e.code || 'internal_error', ...(e.detail ? { detail: e.detail } : {}), ...(e.reasons && config.debug ? { reasons: e.reasons } : {}) }, CORS);
     }
   });
 
@@ -173,7 +186,7 @@ export async function createApp(overrides = {}) {
     server.closeAllConnections?.();
   }
 
-  return { server, config, captcha, envtime, start, stop, log };
+  return { server, config, captcha, registry, envtime, start, stop, log };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

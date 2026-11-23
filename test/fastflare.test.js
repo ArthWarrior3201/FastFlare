@@ -337,3 +337,67 @@ test('static docs are served and path traversal is blocked', async () => {
     assert.ok([403, 404].includes(evil.status));
   });
 });
+
+test('site signup: creates a working key bound to its origins, saved across restarts', async () => {
+  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || '/tmp', 'ff-sites-'));
+  const boot = () => createApp({ quiet: true, port: 0, host: '127.0.0.1', captchaBaseBits: 10, ntp: { enabled: false }, dataDir: dir, envtime: { providers: [{ host: 'a' }, { host: 'b' }, { host: 'c' }], pollMs: 60000 }, timeQuery: () => Promise.resolve({ offsetMs: 0, rttMs: 5 }) });
+  let app = await boot();
+  let { port } = await app.start();
+  let base = `http://127.0.0.1:${port}`;
+  try {
+    assert.equal((await j(base, '/sites/register', { name: 'x', origins: ['javascript:alert(1)'] })).status, 400);
+    assert.equal((await j(base, '/sites/register', { name: 'x', origins: ['http://example.com'] })).status, 400, 'plain http only for localhost');
+    assert.equal((await j(base, '/sites/register', { name: '', origins: ['example.com'] })).status, 400);
+    const r = await (await j(base, '/sites/register', { name: 'My Shop', origins: 'shop.example.com\nhttp://localhost:3000/' })).json();
+    assert.match(r.sitekey, /^ff_site_/);
+    assert.match(r.secret, /^ff_secret_/);
+    assert.deepEqual(r.origins, ['https://shop.example.com', 'http://localhost:3000']);
+    assert.equal((await j(base, '/captcha/challenge', { sitekey: r.sitekey }, { Origin: 'https://evil.example' })).status, 403);
+    assert.equal((await j(base, '/captcha/challenge', { sitekey: r.sitekey }, { Origin: 'http://localhost:3000' })).status, 200);
+    for (let i = 0; i < 4; i++) await j(base, '/sites/register', { name: 'n' + i, origins: ['a.example.com'] });
+    assert.equal((await j(base, '/sites/register', { name: 'over', origins: ['a.example.com'] })).status, 429, 'five signups per network per day');
+    await app.stop();
+
+    app = await boot();
+    ({ port } = await app.start());
+    base = `http://127.0.0.1:${port}`;
+    assert.equal((await j(base, '/captcha/challenge', { sitekey: r.sitekey }, { Origin: 'http://localhost:3000' })).status, 200, 'key survives a restart');
+    const sv = await (await j(base, '/captcha/siteverify', { secret: r.secret, response: 'x.y' })).json();
+    assert.equal(sv['error-codes'][0], 'invalid-input-response', 'secret is recognised');
+  } finally {
+    await app.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('gate: a passed token sets a pass cookie and redirects; bad or reused tokens do not', async () => {
+  const { createGate } = await import('../docs/kit/fastflare-gate.mjs');
+  await withApp(async (base) => {
+    const gate = createGate({ sitekey: 'ff_demo_site', secret: 'ff_demo_secret', api: base, redirect: '/welcome' });
+    const { port } = await gate.listen(0, '127.0.0.1');
+    const g = `http://127.0.0.1:${port}`;
+    try {
+      const home = await (await fetch(g + '/')).text();
+      assert.match(home, /data-verify="\/fastflare\/verify"/);
+      assert.match(home, /data-redirect="\/welcome"/);
+      assert.equal((await fetch(g + '/welcome', { redirect: 'manual' })).status, 302, 'welcome needs a pass');
+
+      const bad = await j(g, '/fastflare/verify', { token: 'forged.token' });
+      assert.equal(bad.status, 403);
+      assert.equal((await bad.json()).success, false);
+
+      const c = await challengeAndProof(base);
+      const { token } = await (await verifyWith(base, c, { trace: humanTrace() })).json();
+      const ok = await j(g, '/fastflare/verify', { token, redirect: '//evil.example' });
+      const body = await ok.json();
+      assert.equal(body.success, true);
+      assert.equal(body.redirect, '/welcome', 'off-site redirects are replaced');
+      const cookie = ok.headers.get('set-cookie').split(';')[0];
+      assert.equal((await fetch(g + '/welcome', { headers: { cookie } })).status, 200);
+      assert.equal((await j(g, '/fastflare/verify', { token })).status, 403, 'token is single use');
+      assert.equal((await fetch(g + '/welcome', { headers: { cookie: 'ff_pass=9999999999999.forged' }, redirect: 'manual' })).status, 302);
+    } finally {
+      await gate.close();
+    }
+  });
+});

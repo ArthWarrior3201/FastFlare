@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quick Start · FastFlare</title>
+<meta name="description" content="Get a FastFlare site key, run the small gate backend anywhere, and protect your site in minutes.">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .keys { display: grid; gap: 14px; margin: 18px 0; }
+  .keys textarea { width: 100%; min-height: 76px; font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel, #0f1330); color: var(--text); box-sizing: border-box; resize: vertical; }
+  .keys input { width: 100%; box-sizing: border-box; }
+  .out { display: none; margin-top: 18px; }
+  .out.show { display: block; }
+  .kv { display: grid; grid-template-columns: max-content 1fr auto; gap: 8px 12px; align-items: center; }
+  .kv code { word-break: break-all; }
+  .kv button { padding: 4px 12px; font-size: 13px; }
+  #err { color: #ff6b6b; min-height: 1.4em; margin: 8px 0 0; }
+  .flow { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin: 18px 0 8px; }
+  .flow div { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .flow b { display: block; margin-bottom: 4px; }
+  .flow span { color: var(--muted); font-size: 14px; }
+  .tabs-os { display: flex; gap: 8px; margin: 10px 0 0; }
+  .tabs-os button[aria-pressed=true] { background: linear-gradient(90deg, var(--flare), var(--flare2)); color: #1a0d05; border-color: transparent; }
+</style>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">Fast<span>Flare</span></a>
+  <nav>
+    <a href="quickstart.html" aria-current="page">Quick Start</a>
+    <a href="captcha.html">Bot Protection</a>
+    <a href="envtime.html">Time Server (NTP)</a>
+    <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
+  </nav>
+</header>
+<main>
+  <h1>Protect Your Site <em>in Five Minutes</em></h1>
+  <p class="lead">Get a site key, run one small backend file anywhere Node.js runs, and every visitor passes through the FastFlare check before reaching your site.</p>
+
+  <h2>How It Works</h2>
+  <div class="flow">
+    <div><b>1 · Visitor clicks</b><span>Your page shows the "I'm not a robot" box. The click goes to the FastFlare network.</span></div>
+    <div><b>2 · FastFlare decides</b><span>Let through, show a quick puzzle, or block, based on the browser's proof-of-work, behaviour and network.</span></div>
+    <div><b>3 · Your backend confirms</b><span>The widget hands the result to your gate, which checks it with FastFlare using your secret.</span></div>
+    <div><b>4 · Through or try again</b><span>A pass goes to your <code>redirect_to_if_pass</code> page. A fail or block asks the visitor to try again.</span></div>
+  </div>
+  <p>The decision is made on the FastFlare server, never in the visitor's browser, and your backend only trusts it after confirming with your secret. A bot that skips the check or forges a pass gets nothing.</p>
+
+  <h2>1 · Get Your Site Key</h2>
+  <p>List every address that will show the check: your live site and, for testing, <code>http://localhost:3000</code>. Requests from any other address are refused.</p>
+  <form id="signup" class="keys">
+    <div><label for="name">Site name</label><input id="name" required maxlength="80" placeholder="My Shop"></div>
+    <div><label for="origins">Website addresses (one per line)</label><textarea id="origins" required>http://localhost:3000</textarea></div>
+    <details><summary>FastFlare server</summary><div style="margin-top:8px"><input id="api" value="https://129-225-87-247.sslip.io" aria-label="FastFlare server"></div></details>
+    <div><button class="btn" id="go" type="submit">Create Site Key</button><p id="err" role="alert"></p></div>
+  </form>
+  <div id="out" class="out">
+    <div class="note"><strong>Copy your secret now.</strong> It is shown only once. Keep it on your server; never put it in a web page or a public repository.</div>
+    <div class="kv">
+      <span>Site key</span><code id="o-key"></code><button class="btn ghost" data-copy="o-key" type="button">Copy</button>
+      <span>Secret</span><code id="o-secret"></code><button class="btn ghost" data-copy="o-secret" type="button">Copy</button>
+      <span>Server</span><code id="o-api"></code><button class="btn ghost" data-copy="o-api" type="button">Copy</button>
+    </div>
+  </div>
+
+  <h2>2 · Run the Gate</h2>
+  <p>The gate is one file with no packages to install. It needs Node.js 18 or newer and runs on any computer or server: a VPS, Render, Railway, a Raspberry Pi or your own PC.</p>
+  <div class="tabs-os" role="group" aria-label="Operating system">
+    <button class="btn ghost" type="button" data-os="win" aria-pressed="true">Windows</button>
+    <button class="btn ghost" type="button" data-os="nix" aria-pressed="false">macOS and Linux</button>
+  </div>
+  <div data-os-show="win">
+    <p>In PowerShell:</p>
+<pre><code id="cmd-win">irm https://arthwarrior3201.github.io/FastFlare/kit/fastflare-gate.mjs -OutFile fastflare-gate.mjs
+node fastflare-gate.mjs --sitekey=YOUR_SITE_KEY --secret=YOUR_SECRET</code></pre>
+  </div>
+  <div data-os-show="nix" hidden>
+    <p>In Terminal:</p>
+<pre><code id="cmd-nix">curl -fsSLO https://arthwarrior3201.github.io/FastFlare/kit/fastflare-gate.mjs
+node fastflare-gate.mjs --sitekey=YOUR_SITE_KEY --secret=YOUR_SECRET</code></pre>
+  </div>
+  <p>Open <code>http://localhost:3000</code> and click the box. When you pass, you land on <code>/welcome</code>, a page only verified visitors can open. Try opening <code>/welcome</code> in a private window first: it sends you back to the check.</p>
+
+  <h2>3 · Choose Where Visitors Go</h2>
+  <table>
+    <tr><th>Option</th><th>What it does</th></tr>
+    <tr><td><code>--redirect=/dashboard</code></td><td>The <code>redirect_to_if_pass</code> address. Visitors who pass are sent here. Default <code>/welcome</code> (a built-in demo page).</td></tr>
+    <tr><td><code>--upstream=http://localhost:8080</code></td><td>Put the gate in front of your existing site. Every visitor must pass first; after that, requests go straight through to your site and return to the page they asked for. Your site gets an <code>X-FastFlare-Pass: 1</code> header.</td></tr>
+    <tr><td><code>--port=3000</code></td><td>Port the gate listens on.</td></tr>
+    <tr><td><code>--pass-minutes=30</code></td><td>How long a pass lasts before the visitor is checked again.</td></tr>
+    <tr><td><code>--title="Checking your browser"</code></td><td>Heading on the check page.</td></tr>
+    <tr><td><code>--trust-proxy=1</code></td><td>Behind Nginx, Caddy or Cloudflare: read the visitor's address and HTTPS from proxy headers.</td></tr>
+    <tr><td><code>--check-ip=1</code></td><td>Also require the visitor's address to match the one FastFlare saw. Turn on only when the gate sees real visitor addresses.</td></tr>
+    <tr><td><code>--api=https://…</code></td><td>Use a different FastFlare server (for example your own).</td></tr>
+  </table>
+  <p>Every option also works as an environment variable: <code>FF_SITEKEY</code>, <code>FF_SECRET</code>, <code>REDIRECT_TO_IF_PASS</code>, <code>FF_UPSTREAM</code>, <code>PORT</code>, <code>FF_PASS_MINUTES</code>, <code>FF_TITLE</code>, <code>TRUST_PROXY</code>, <code>FF_CHECK_IP</code>, <code>FF_API</code>. Hosting platforms usually set <code>PORT</code> for you.</p>
+  <div class="note"><strong>Going live.</strong> Add your real address (for example <code>https://shop.example.com</code>) to the site key's list, serve the gate over HTTPS, and use <code>--trust-proxy=1</code> if a proxy sits in front of it. Plain <code>http://</code> addresses are accepted only for <code>localhost</code>.</div>
+
+  <h2>Use Your Own Backend Instead</h2>
+  <p>Already have a server? Put the widget on your page and point <code>data-verify</code> at your own endpoint:</p>
+<pre><code>&lt;script src="https://129-225-87-247.sslip.io/fastflare.js" async defer&gt;&lt;/script&gt;
+&lt;div class="ff-captcha"
+     data-sitekey="YOUR_SITE_KEY"
+     data-verify="/fastflare/verify"
+     data-redirect="/dashboard"&gt;&lt;/div&gt;</code></pre>
+  <p>When the visitor passes, the widget sends <code>POST /fastflare/verify</code> with <code>{"token": "…", "redirect": "/dashboard"}</code>. Your endpoint checks the token with FastFlare and answers <code>{"success": true, "redirect": "/dashboard"}</code> to send the visitor through, or <code>{"success": false}</code> (any status) to make the widget say "Could not verify, try again". Only accept same-site paths for <code>redirect</code>.</p>
+  <p>The check itself is one request from your server:</p>
+<pre><code>POST https://129-225-87-247.sslip.io/captcha/siteverify
+Content-Type: application/json
+
+{"secret": "YOUR_SECRET", "response": "TOKEN_FROM_THE_WIDGET"}
+
+→ {"success": true, "method": "invisible", "challenge_ts": "…"}
+→ {"success": false, "error-codes": ["timeout-or-duplicate"]}</code></pre>
+  <h3>Node.js</h3>
+<pre><code>import { verifyToken } from './fastflare-gate.mjs';
+
+app.post('/fastflare/verify', express.json(), async (req, res) =&gt; {
+  const r = await verifyToken(req.body.token, { secret: process.env.FF_SECRET });
+  if (!r.success) return res.status(403).json({ success: false, error: r.error });
+  req.session.human = true;
+  res.json({ success: true, redirect: '/dashboard' });
+});</code></pre>
+  <h3>Python (Flask)</h3>
+<pre><code>import os, requests
+from flask import request, session, jsonify
+
+@app.post("/fastflare/verify")
+def fastflare_verify():
+    r = requests.post("https://129-225-87-247.sslip.io/captcha/siteverify",
+                      json={"secret": os.environ["FF_SECRET"], "response": request.json.get("token")},
+                      timeout=8).json()
+    if not r.get("success"):
+        return jsonify(success=False), 403
+    session["human"] = True
+    return jsonify(success=True, redirect="/dashboard")</code></pre>
+  <h3>PHP</h3>
+<pre><code>&lt;?php
+$in = json_decode(file_get_contents('php://input'), true);
+$ctx = stream_context_create(['http' =&gt; ['method' =&gt; 'POST', 'header' =&gt; "Content-Type: application/json\r\n",
+  'content' =&gt; json_encode(['secret' =&gt; getenv('FF_SECRET'), 'response' =&gt; $in['token'] ?? ''])]]);
+$r = json_decode(file_get_contents('https://129-225-87-247.sslip.io/captcha/siteverify', false, $ctx), true);
+header('Content-Type: application/json');
+if (empty($r['success'])) { http_response_code(403); echo '{"success":false}'; exit; }
+session_start(); $_SESSION['human'] = true;
+echo json_encode(['success' =&gt; true, 'redirect' =&gt; '/dashboard']);</code></pre>
+
+  <h2>What Visitors See</h2>
+  <table>
+    <tr><th>FastFlare's decision</th><th>Widget</th><th>Result</th></tr>
+    <tr><td>Let through</td><td>Verified, then "Taking you through…"</td><td>Sent to <code>redirect_to_if_pass</code> with a pass</td></tr>
+    <tr><td>Challenge</td><td>A quick shape puzzle</td><td>Solved: let through. Wrong three times: blocked</td></tr>
+    <tr><td>Block</td><td>"Could not verify, try again"</td><td>Stays on the check page</td></tr>
+    <tr><td>Too many attempts</td><td>"Too many attempts from this network, try later"</td><td>Stays on the check page for up to 10 minutes</td></tr>
+  </table>
+
+  <h2>Troubleshooting</h2>
+  <table>
+    <tr><th>Symptom</th><th>Fix</th></tr>
+    <tr><td>The box says "Could not verify" for everyone</td><td>The page's address is not in the site key's list. The address must match exactly, including <code>http</code>/<code>https</code> and the port. Create a new key with the right addresses.</td></tr>
+    <tr><td>The gate exits with "FastFlare rejected this secret"</td><td>The secret does not belong to that site key. Copy both again from step 1.</td></tr>
+    <tr><td>Passed, but the redirect page sends you back</td><td>The browser did not keep the pass cookie: make sure the redirect is on the same site as the gate, and use HTTPS with <code>--trust-proxy=1</code> behind a proxy.</td></tr>
+  </table>
+</main>
+<footer>FastFlare</footer>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function setCmd(key, secret) {
+    var a = '--sitekey=' + key + ' --secret=' + secret;
+    $('cmd-win').textContent = 'irm https://arthwarrior3201.github.io/FastFlare/kit/fastflare-gate.mjs -OutFile fastflare-gate.mjs\nnode fastflare-gate.mjs ' + a;
+    $('cmd-nix').textContent = 'curl -fsSLO https://arthwarrior3201.github.io/FastFlare/kit/fastflare-gate.mjs\nnode fastflare-gate.mjs ' + a;
+  }
+  var MSG = {
+    invalid_origin: 'This address is not valid: ',
+    origins_required: 'Add at least one website address.',
+    too_many_origins: 'Up to 10 addresses per key.',
+    name_required: 'Give your site a name.',
+    too_many_signups: 'Too many keys created from this network today. Try again tomorrow.',
+    signup_closed: 'This FastFlare server is not taking new sites.',
+  };
+  $('signup').addEventListener('submit', function (e) {
+    e.preventDefault();
+    $('err').textContent = '';
+    $('go').disabled = true;
+    var api = $('api').value.trim().replace(/\/$/, '');
+    fetch(api + '/sites/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: $('name').value, origins: $('origins').value.split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean) }),
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok) throw new Error((MSG[x.j.error] || 'Could not create the key (' + (x.j.error || 'error') + ').') + (x.j.detail || ''));
+        $('o-key').textContent = x.j.sitekey;
+        $('o-secret').textContent = x.j.secret;
+        $('o-api').textContent = api;
+        $('out').classList.add('show');
+        setCmd(x.j.sitekey, x.j.secret);
+        $('signup').querySelectorAll('input,textarea,button').forEach(function (el) { el.disabled = true; });
+      })
+      .catch(function (err) { $('err').textContent = err.message === 'Failed to fetch' ? 'Could not reach ' + api + '.' : err.message; $('go').disabled = false; });
+  });
+  document.querySelectorAll('[data-copy]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      navigator.clipboard.writeText($(b.dataset.copy).textContent).then(function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500); });
+    });
+  });
+  document.querySelectorAll('[data-os]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('[data-os]').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+      document.querySelectorAll('[data-os-show]').forEach(function (d) { d.hidden = d.dataset.osShow !== b.dataset.os; });
+    });
+  });
+  if (/Mac|Linux/.test(navigator.platform) && !/Win/.test(navigator.platform)) document.querySelector('[data-os=nix]').click();
+})();
+</script>
+</body>
+</html>

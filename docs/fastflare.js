@@ -490,6 +490,11 @@
       error: o.errorCallback || (d.errorCallback && global[d.errorCallback]),
       field: o.field || d.field || 'ff-token',
       settle: o.settle != null ? o.settle : d.settle != null ? +d.settle : undefined,
+      // Your backend's check endpoint: it receives the token, asks FastFlare whether it is real
+      // (with your secret), and answers { success, redirect }.
+      verify: o.verify || d.verify || '',
+      // Where to send the visitor after your backend confirms the pass (redirect_to_if_pass).
+      redirect: o.redirect || d.redirect || d.redirectToIfPass || '',
     };
     if (!opts.sitekey) throw new Error('FastFlare: data-sitekey is required');
     var checkbox = opts.mode !== 'auto';
@@ -562,13 +567,42 @@
       },
     };
 
+    // Ask the site's own backend to confirm the token with FastFlare before treating it as a pass.
+    function confirm(r) {
+      if (!opts.verify) return r;
+      setState('solving', 'Checking…');
+      return fetch(opts.verify, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: r.token, redirect: opts.redirect || undefined }),
+      })
+        .then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) { return { res: res, j: j }; }); })
+        .then(function (x) {
+          if (!x.res.ok || !x.j.success) {
+            var e = new Error('rejected');
+            e.code = x.j.error || 'rejected';
+            throw e;
+          }
+          r.redirect = x.j.redirect || opts.redirect || '';
+          r.confirmed = true;
+          return r;
+        });
+    }
+
     function succeed(r) {
       busy = false;
       if (sig) { sig.stop(); sig = null; }
       input.value = r.token;
-      setState('ok', 'Verified', r.method === 'puzzle' ? 'Thanks, you passed the check' : 'You are human');
+      setState('ok', 'Verified', r.redirect ? 'Taking you through…' : r.method === 'puzzle' ? 'Thanks, you passed the check' : 'You are human');
       if (opts.callback) opts.callback(r.token);
-      el.dispatchEvent(new CustomEvent('ff-verified', { detail: { token: r.token }, bubbles: true }));
+      el.dispatchEvent(new CustomEvent('ff-verified', { detail: { token: r.token, redirect: r.redirect || null }, bubbles: true }));
+      if (r.redirect) {
+        setTimeout(function () { global.location.assign(r.redirect); }, 500);
+        return r.token;
+      }
+      // A confirmed token has already been used up by the backend check; nothing to expire.
+      if (r.confirmed) return r.token;
       // Tokens last 2 minutes; expire a little early so a form never submits a dead one.
       timer = setTimeout(function () {
         input.value = '';
@@ -592,7 +626,7 @@
       pzHost.innerHTML = '';
       var limited = e && (e.code === 'too_many_failures' || e.code === 'too_many_tokens' || e.code === 'rate_limited');
       if (checkbox) {
-        idle(limited ? 'Too many attempts from this network, try later' : 'Could not verify, try again');
+        idle(limited ? 'Too many attempts from this network, try later' : e && e.code === 'blocked' ? 'Access blocked, try again later' : 'Could not verify, try again');
         box.dataset.state = 'error';
       } else {
         setState('error', 'Verification failed', limited ? 'Too many attempts from this network' : '');
@@ -617,7 +651,7 @@
       var o2 = { sitekey: opts.sitekey, api: opts.api, settle: opts.settle, hp: hp.value };
       var p = checkbox ? warm() : prepare(o2);
       prep = null; // one challenge per attempt
-      return p.then(function (pp) { return submit(o2, hooks, s, pp); }).then(succeed, fail);
+      return p.then(function (pp) { return submit(o2, hooks, s, pp); }).then(confirm).then(succeed, fail);
     }
 
     function activate() {
