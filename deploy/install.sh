@@ -55,7 +55,7 @@ fi
 chown -R fastflare:fastflare "$DIR"
 mkdir -p /var/lib/fastflare && chown fastflare:fastflare /var/lib/fastflare && chmod 700 /var/lib/fastflare
 
-grep -q "^FF_DATA_DIR=" "$ENVFILE" 2>/dev/null || { [ -f "$ENVFILE" ] && echo "FF_DATA_DIR=/var/lib/fastflare" >> "$ENVFILE"; }
+if [ -f "$ENVFILE" ] && ! grep -q "^FF_DATA_DIR=" "$ENVFILE"; then echo "FF_DATA_DIR=/var/lib/fastflare" >> "$ENVFILE"; fi
 if [ ! -f "$ENVFILE" ]; then
   say "Creating settings in $ENVFILE"
   {
