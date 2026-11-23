@@ -4,7 +4,6 @@
 #     curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.command | bash
 #   Remove it again:  bash install.command uninstall
 #
-# Optional labels (put before "bash"):  FF_PROVIDER="Home" FF_CITY="Varanasi"
 set -euo pipefail
 
 [ "$(uname)" = "Darwin" ] || { echo "This installer is for macOS. On Linux use install.sh."; exit 1; }
@@ -53,9 +52,6 @@ if [ ! -f "$ENVFILE" ]; then
   SECRET="$("$NODE" -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
   sudo tee "$ENVFILE" >/dev/null <<ENV
 FF_SECRET=$SECRET
-FF_PROVIDER="${FF_PROVIDER:-Self-hosted}"
-FF_CITY="${FF_CITY:-This Mac}"
-FF_COUNTRY="${FF_COUNTRY:-}"
 ENV
   sudo chmod 600 "$ENVFILE"
 fi

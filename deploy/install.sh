@@ -4,7 +4,6 @@
 #   curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.sh | sudo bash
 #
 # Optional settings (put them before "sudo bash"):
-#   FF_PROVIDER=Oracle FF_CITY=Hyderabad FF_COUNTRY=IN   label this node in the speed test list
 #   FF_SWAP_GB=4                                         swap file size when the server has no swap (0 = skip)
 #   FF_BRANCH=main                                       branch to install
 #
@@ -59,9 +58,6 @@ if [ ! -f "$ENVFILE" ]; then
   say "Creating settings in $ENVFILE"
   {
     echo "FF_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
-    echo "FF_PROVIDER=${FF_PROVIDER:-Self-hosted}"
-    echo "FF_CITY=${FF_CITY:-Server}"
-    echo "FF_COUNTRY=${FF_COUNTRY:-}"
   } > "$ENVFILE"
   chmod 600 "$ENVFILE"
   chown root:root "$ENVFILE"

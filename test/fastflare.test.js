@@ -310,26 +310,6 @@ test('CAPTCHA: one network gets 1 invisible token, then puzzles, then nothing', 
   });
 });
 
-test('Speed test: registry, ping, download size and upload accounting', async () => {
-  await withApp(async (base) => {
-    const list = await (await fetch(base + '/speed/servers')).json();
-    assert.equal(list.servers[0].provider, 'Local');
-
-    assert.equal((await fetch(base + '/speed/ping')).status, 200);
-
-    const d = await fetch(base + '/speed/down?bytes=300000');
-    assert.equal((await d.arrayBuffer()).byteLength, 300000);
-    assert.equal((await fetch(base + '/speed/down?bytes=-1')).status, 400);
-
-    const up = await (await fetch(base + '/speed/up', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(200000) })).json();
-    assert.equal(up.bytes, 200000);
-
-    const pre = await fetch(base + '/speed/up', { method: 'OPTIONS' });
-    assert.equal(pre.status, 204);
-    assert.equal(pre.headers.get('access-control-allow-origin'), '*');
-  });
-});
-
 test('EnvTime HTTP: majority time in the requested zone, outlier kicked', async () => {
   await withApp(async (base) => {
     const before = Date.now();

@@ -1,10 +1,9 @@
 # FastFlare
 
-Three tools in one zero-dependency Node service (Node 20+):
+Two tools in one zero-dependency Node service (Node 20+):
 
 1. **Bot protection** without picture puzzles: proof-of-work in Web Workers plus behaviour signals, verified by your server.
-2. **Speed test**: choose a provider, then a city that provider has a server in, and measure download, upload, latency, jitter and packet loss against that server, with graphs.
-3. **EnvTime**: asks Google, Apple, Windows and other NTP servers, kicks any that disagree with the majority, and serves precise time over HTTP (any time zone) and NTP (usable as a Windows time server).
+2. **EnvTime**: asks Google, Apple, Windows and other NTP servers, kicks any that disagree with the majority, and serves precise time over HTTP (any time zone) and NTP (usable as a Windows time server).
 
 Documentation and integration guides: **https://arthwarrior3201.github.io/FastFlare/**
 
@@ -24,7 +23,7 @@ It installs Node.js, swap (on small servers), firewall rules and a boot-time ser
 FF_SECRET=$(openssl rand -hex 32) node src/server.js
 ```
 
-HTTP listens on `:8787` and also serves the docs, `/fastflare.js` (widget) and `/fastflare-speedtest.js` (speed test client). NTP listens on UDP 123, which needs privileges; use `NTP_PORT=1230` to try it unprivileged or `FF_NTP=0` to disable it. Docker: `docker build -t fastflare . && docker run -p 8787:8787 -p 123:123/udp -e FF_SECRET=... fastflare`.
+HTTP listens on `:8787` and also serves the docs, `/fastflare.js` (widget). NTP listens on UDP 123, which needs privileges; use `NTP_PORT=1230` to try it unprivileged or `FF_NTP=0` to disable it. Docker: `docker build -t fastflare . && docker run -p 8787:8787 -p 123:123/udp -e FF_SECRET=... fastflare`.
 
 ```sh
 npm test
@@ -48,20 +47,18 @@ const out = await (await fetch('https://YOUR-HOST/captcha/siteverify', {
 
 Time: `GET /time?tz=Asia/Kolkata`.
 
-Full guides (options, speed test embedding, node registry, Windows time server setup) are in [`docs/`](docs/) and on the site above.
+Full guides (options, Windows time server setup) are in [`docs/`](docs/) and on the site above.
 
 ## Layout
 
 | Path | What |
 | --- | --- |
 | `src/captcha.js` | Challenges, proof check, scoring, tokens, siteverify |
-| `src/speedtest.js` | Ping, download and upload endpoints, server registry |
 | `src/ntp.js`, `src/envtime.js` | NTP client and server, consensus clock |
-| `docs/` | GitHub Pages site, plus the browser libraries `fastflare.js` and `fastflare-speedtest.js` |
-| `config/*.example.json` | Site keys and speed test node list templates |
+| `docs/` | GitHub Pages site, plus the browser widget `fastflare.js` |
+| `config/*.example.json` | Site key template |
 
 ## Limits worth knowing
 
 - No CAPTCHA is unbeatable. This raises the cost of abuse and stops lazy automation; the behaviour signals come from the client and can be forged. Rate-limit sensitive endpoints too.
-- The speed test provider/city list is whatever nodes you deploy and list in `config/servers.json`.
 - EnvTime accuracy is typically a few milliseconds over normal internet; each reply includes `uncertaintyMs`.

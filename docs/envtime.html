@@ -13,9 +13,7 @@
   <a class="brand" href="index.html">Fast<span>Flare</span></a>
   <nav>
     <a href="captcha.html">Bot Protection</a>
-    <a href="speedtest.html">Speed Test</a>
     <a href="envtime.html" aria-current="page">Time Server (NTP)</a>
-    <a href="speedtest-app.html">Live Speed Test</a>
     <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
   </nav>
 </header>
@@ -55,7 +53,7 @@
     <li><strong>Run the installer</strong>
       One command installs everything: Node.js, a 4 GB swap file on small servers, the server's own firewall rules, and a background service that starts on boot.
 <pre><code>curl -fsSL https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.sh | sudo bash</code></pre>
-      When it finishes it prints your server's address and the exact commands for Windows. Add <code>FF_PROVIDER=Oracle FF_CITY=Hyderabad</code> before <code>sudo bash</code> to label the node in the speed test list.
+      When it finishes it prints your server's address and the exact commands for Windows.
     </li>
     <li><strong>Check that it works</strong>
       Open this in a browser (use your IP):
@@ -136,6 +134,6 @@ console.log(t.local);</code></pre>
     <tr><td>Installer says port 123 is busy</td><td>Another time service owns it. Stop it (<code>sudo systemctl disable --now chrony</code>) and restart FastFlare.</td></tr>
   </table>
 </main>
-<footer>FastFlare · Bot Protection, Speed Test and Time Server</footer>
+<footer>FastFlare</footer>
 </body>
 </html>

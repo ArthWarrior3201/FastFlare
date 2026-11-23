@@ -5,7 +5,6 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { CORS, send, readBody, clientIp, httpError } from './util.js';
 import { createCaptcha } from './captcha.js';
-import { createSpeedtest } from './speedtest.js';
 import { EnvTime, formatTime } from './envtime.js';
 import { startNtpServer } from './ntp.js';
 
@@ -32,12 +31,6 @@ export async function createApp(overrides = {}) {
     quotaSoft: config.quotaSoft,
     quotaHard: config.quotaHard,
     puzzleMinMs: config.puzzleMinMs,
-  });
-  const speed = createSpeedtest({
-    node: config.node,
-    servers: config.servers,
-    maxBytes: config.speed.maxBytes,
-    trustProxy: config.trustProxy,
   });
   const envtime = new EnvTime({ ...config.envtime, query: overrides.timeQuery, log });
 
@@ -129,15 +122,7 @@ export async function createApp(overrides = {}) {
         return send(res, 200, captcha.siteverify({ secret: b.secret, token: b.response ?? b.token, remoteip: b.remoteip }));
       }
 
-      // --- Service 2: speed test -----------------------------------------------------------
-      if (p === '/speed/ping') return speed.ping(req, res);
-      if (p === '/speed/down' && req.method === 'GET') return speed.down(req, res, url);
-      if (p === '/speed/up' && req.method === 'POST') return speed.up(req, res, url);
-      if (p === '/speed/upstats' && req.method === 'GET') return speed.upstats(req, res, url);
-      if (p === '/speed/servers') return speed.list(req, res);
-      if (p === '/speed/info') return speed.info(req, res);
-
-      // --- Service 3: EnvTime ---------------------------------------------------------------
+      // --- Service 2: EnvTime ---------------------------------------------------------------
       if (p === '/time' && req.method === 'GET') return await timeHandler(req, res, url);
       if (p === '/time/status') return send(res, 200, envtime.status(), CORS);
 
@@ -183,13 +168,12 @@ export async function createApp(overrides = {}) {
   async function stop() {
     envtime.stop();
     captcha.close();
-    speed.close?.();
     ntp?.close();
     await new Promise((r) => server.close(r));
     server.closeAllConnections?.();
   }
 
-  return { server, config, captcha, speed, envtime, start, stop, log };
+  return { server, config, captcha, envtime, start, stop, log };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

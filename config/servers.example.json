@@ -1,5 +1,0 @@
-[
-  { "provider": "AWS", "city": "Frankfurt", "country": "DE", "url": "https://fra.speed.example.com" },
-  { "provider": "AWS", "city": "Mumbai", "country": "IN", "url": "https://bom.speed.example.com" },
-  { "provider": "Hetzner", "city": "Helsinki", "country": "FI", "url": "https://hel.speed.example.com" }
-]

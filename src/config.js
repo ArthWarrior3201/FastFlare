@@ -56,15 +56,6 @@ export function loadConfig(overrides = {}) {
     warnings.push('No config/sites.json found: only the public demo site key "ff_demo_site" is enabled. Do not use it in production.');
   }
 
-  const node = {
-    id: env.FF_NODE_ID || 'local',
-    provider: env.FF_PROVIDER || 'Local',
-    city: env.FF_CITY || 'This server',
-    country: env.FF_COUNTRY || '',
-    publicUrl: env.FF_PUBLIC_URL || '',
-  };
-
-  const servers = readJson(env.FF_SERVERS_FILE || path.join(root, 'config', 'servers.json')) || [];
 
   const cfg = {
     root,
@@ -78,9 +69,6 @@ export function loadConfig(overrides = {}) {
     quotaSoft: int(env.FF_QUOTA_SOFT, 1),
     puzzleMinMs: int(env.FF_PUZZLE_MIN_MS, 800),
     quotaHard: int(env.FF_QUOTA_HARD, 8),
-    node,
-    servers,
-    speed: { maxBytes: int(env.FF_MAX_BYTES, 100 * 1024 * 1024) },
     ntp: {
       enabled: env.FF_NTP !== '0',
       port: int(env.NTP_PORT, 123),

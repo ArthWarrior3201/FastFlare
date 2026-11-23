@@ -5,18 +5,14 @@ FastFlare installer for Windows.
   Or, in an ADMINISTRATOR PowerShell:
     irm https://raw.githubusercontent.com/ArthWarrior3201/FastFlare/main/deploy/install.ps1 | iex
 
-  Server:   install.ps1 [-Provider "Home"] [-City "Varanasi"]    runs FastFlare on this PC (starts at boot)
+  Server:   install.ps1                                           runs FastFlare on this PC (starts at boot)
   Client:   install.ps1 -Client SERVER.IP                         makes this PC take its time from a FastFlare server
   Remove:   install.ps1 -Uninstall
 #>
 param(
   [string]$Client,
-  [string]$Provider = 'Self-hosted',
-  [string]$City = 'Windows PC',
   [switch]$Uninstall
 )
-if (-not $Provider) { $Provider = 'Self-hosted' }
-if (-not $City) { $City = 'Windows PC' }
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -98,7 +94,7 @@ if (-not (Test-Path $settings)) {
   $bytes = New-Object byte[] 32
   [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
   $secret = ($bytes | ForEach-Object { $_.ToString('x2') }) -join ''
-  Set-Content -Path $settings -Encoding ASCII -Value @("set FF_SECRET=$secret", "set FF_PROVIDER=$Provider", "set FF_CITY=$City")
+  Set-Content -Path $settings -Encoding ASCII -Value @("set FF_SECRET=$secret")
 }
 $run = Join-Path $Root 'run.cmd'
 Set-Content -Path $run -Encoding ASCII -Value @(
