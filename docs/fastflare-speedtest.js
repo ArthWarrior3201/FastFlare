@@ -66,7 +66,7 @@
 
   function FastFlareSpeedTest(opts) {
     opts = opts || {};
-    this.api = (opts.api || '').replace(/\/$/, '');
+    this.api = (opts.api || '').replace(/\/speed\/servers\/?$/, '').replace(/\/$/, '');
     this.registry = opts.registry || this.api + '/speed/servers';
     this.servers = [];
     this.pings = opts.pings || 20;

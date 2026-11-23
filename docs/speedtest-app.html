@@ -48,7 +48,7 @@
     <details id="adv">
       <summary>Registry server</summary>
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-        <input id="api" size="38" placeholder="https://your-fastflare-host" aria-label="FastFlare registry URL">
+        <input id="api" size="38" placeholder="https://your-fastflare-host (server address only)" aria-label="FastFlare server address">
         <button class="btn ghost" id="load">Load servers</button>
       </div>
     </details>
@@ -159,7 +159,7 @@
   $('provider').onchange = fillCities;
 
   function load() {
-    var api = $('api').value.replace(/\/$/, '');
+    var api = $('api').value.trim().replace(/\/speed\/servers\/?$/, '').replace(/\/$/, '');
     if (!api) { status('Enter your FastFlare registry URL under "Registry server" to load providers.', true); $('adv').open = true; return; }
     localStorage.setItem('ff-api', api);
     st = new FastFlareSpeedTest({ api: api });
