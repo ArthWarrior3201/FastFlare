@@ -18,6 +18,22 @@ const TAG = 16;
 const SEG_PER_PART = 44;
 const enc = new TextEncoder();
 const ID_RE = /^[A-Za-z0-9_-]{16}$/;
+const CHUNK_MAX = 256 * 1024 * 1024;
+function rangeSpan(header, size) {
+  const m = String(header || '').match(/^bytes=(\d*)-(\d*)$/);
+  if (!m || (!m[1] && !m[2])) return null;
+  if (!m[1]) return Math.min(size, Number(m[2]));
+  const a = Number(m[1]);
+  const b = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  return Math.max(0, b - a + 1);
+}
+function pickRoute({ asked, total, single, span, html, smallMax, xlMin }) {
+  if (asked === 'edge' || asked === 'native' || (asked === 'chunked' && single)) return asked;
+  if (span != null && span <= CHUNK_MAX) return 'edge';
+  if (total <= smallMax) return 'edge';
+  if (single && total > xlMin && html) return 'chunked';
+  return 'native';
+}
 const NEVER_INLINE = /^(text\/html|image\/svg\+xml|text\/javascript|application\/xhtml)/;
 
 const CORS = {
@@ -274,13 +290,35 @@ export default async function handler(req) {
   } else selected = m.files;
   if (!selected.length) return json(404, { error: 'file_not_found' });
 
-  // Too big to finish within Vercel's 300-second streaming limit: hand over to the server.
+  // Smart routing (same rules as the server): small files here, normal files from the server,
+  // extra-large files through the chunked downloader.
+  const single = selected.length === 1 && q.get('zip') !== '1';
   const total = selected.reduce((a, f) => a + f.size, 0);
-  if (total > edgeMax()) {
-    const qs = new URLSearchParams(q);
-    qs.delete('p');
-    const to = `${ORIGIN}/cdn/${[bundle, ...nameParts].map(encodeURIComponent).join('/')}${[...qs].length ? '?' + qs : ''}`;
-    return new Response(null, { status: 307, headers: { ...CORS, Location: to } });
+  const span = single ? rangeSpan(req.headers.get('range'), selected[0].size) : null;
+  let route = pickRoute({
+    asked: q.get('route'),
+    total,
+    single,
+    span,
+    html: /text\/html/.test(req.headers.get('accept') || '') && !!q.get('key'),
+    smallMax: Number(env('FF_ROUTE_SMALL_MB', 25)) * 1048576,
+    xlMin: Number(env('FF_ROUTE_XL_MB', 500)) * 1048576,
+  });
+  // Vercel stops an edge response after 300 seconds: never start one that may not finish.
+  if (route === 'edge' && (span == null ? total > edgeMax() : span > CHUNK_MAX)) route = 'native';
+  const path = `/cdn/${[bundle, ...nameParts].map(encodeURIComponent).join('/')}`;
+  const qs = new URLSearchParams(q);
+  qs.delete('p');
+  if (route === 'native') {
+    qs.set('route', 'native');
+    return new Response(null, { status: 307, headers: { ...CORS, 'Cache-Control': 'no-store', Location: `${ORIGIN}${path}?${qs}` } });
+  }
+  if (route === 'chunked') {
+    qs.set('route', 'native');
+    qs.set('download', '1');
+    const f = selected[0];
+    const h = new URLSearchParams({ b: bundle, f: f.name, s: String(f.size), k: q.get('key'), src: url.origin, native: `${ORIGIN}${path}?${qs}` });
+    return new Response(null, { status: 307, headers: { ...CORS, 'Cache-Control': 'no-store', Location: `${url.origin}/get.html#${h}` } });
   }
 
   const keyInUrl = !req.headers.get('x-ff-key');

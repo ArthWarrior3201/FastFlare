@@ -72,6 +72,8 @@ export function loadConfig(overrides = {}) {
     cdn: {
       token: env.FF_CDN_TOKEN || '',
       edgeUrl: (env.FF_CDN_EDGE_URL || '').replace(/\/$/, ''),
+      routeSmallBytes: int(env.FF_ROUTE_SMALL_MB, 25) * 1048576,
+      routeXlBytes: int(env.FF_ROUTE_XL_MB, 500) * 1048576,
       maxBytes: int(env.FF_CDN_MAX_MB, 4096) * 1048576,
       smallMaxBytes: int(env.FF_CDN_SMALL_MB, 5) * 1048576,
       githubMaxBytes: int(env.FF_CDN_GITHUB_MAX_MB, 1024) * 1048576,

@@ -487,7 +487,7 @@ function mockCloud() {
   };
 }
 
-async function withCdn(fn) {
+async function withCdn(fn, extra = {}) {
   const cloud = mockCloud();
   await new Promise((r) => cloud.server.listen(0, '127.0.0.1', r));
   const mock = `http://127.0.0.1:${cloud.server.address().port}`;
@@ -501,6 +501,7 @@ async function withCdn(fn) {
         token: 'owner-token',
         supabase: { url: mock, key: 'supa-key', bucket: 'ffcdn' },
         github: { repo: 'me/repo', branch: 'cdn', token: 'gh-token', api: mock, raw: mock + '/raw' },
+        ...extra,
       },
     });
     const { port } = await app.start();
@@ -656,11 +657,9 @@ test('CDN edge function: decrypts at the edge from direct links, ranges, zip, wr
     assert.equal((await call(`/cdn/${a.bundle}/logo.png`)).status, 403);
     assert.equal((await call(`/cdn/${a.bundle}/nope.png?key=${a.key}`)).status, 404);
 
-    process.env.FF_EDGE_MAX_MB = '1';
     r = await call(`/cdn/${a.bundle}/main.iso?key=${a.key}`);
-    assert.equal(r.status, 307);
-    assert.equal(r.headers.get('location'), `${env.base}/cdn/${a.bundle}/main.iso?key=${a.key}`);
-    delete process.env.FF_EDGE_MAX_MB;
+    assert.equal(r.status, 307, 'normal-size files are sent to the server');
+    assert.equal(r.headers.get('location'), `${env.base}/cdn/${a.bundle}/main.iso?key=${a.key}&route=native`);
 
     const t = await put('t.txt', 'tamper');
     env.cloud.tamperSupabase(t.bundle + '/');
@@ -668,4 +667,78 @@ test('CDN edge function: decrypts at the edge from direct links, ranges, zip, wr
     assert.equal((await fetch(`${env.base}/cdn/part/${a.bundle}/x/0?exp=${Date.now() + 1e5}&sig=bad`)).status, 403, 'part links must be signed');
     delete process.env.FF_ORIGIN;
   });
+});
+
+test('CDN smart routing: small to the edge, normal from the server, extra-large to the chunked downloader', { timeout: 60000 }, async () => {
+  const { default: edge } = await import('../vercel/api/cdn.js');
+  await withCdn(async (env) => {
+    process.env.FF_ORIGIN = env.base;
+    process.env.FF_ROUTE_SMALL_MB = '1';
+    process.env.FF_ROUTE_XL_MB = '5';
+    try {
+      const put = (name, data, q = '', h = {}) =>
+        fetch(`${env.base}/cdn/upload?name=${encodeURIComponent(name)}${q}`, { method: 'PUT', headers: { Authorization: 'Bearer owner-token', ...h }, body: data }).then((r) => r.json());
+      const logo = crypto.randomBytes(40_000);
+      const mid = crypto.randomBytes(3 * 1024 * 1024);
+      const big = crypto.randomBytes(7 * 1024 * 1024);
+      const a = await put('logo.png', logo);
+      await put('mid.bin', mid, `&bundle=${a.bundle}`, { 'X-FF-Key': a.key });
+      await put('big.bin', big, `&bundle=${a.bundle}`, { 'X-FF-Key': a.key });
+      const HTML = { Accept: 'text/html,application/xhtml+xml' };
+      const vm = (p, h = {}) => fetch(env.base + p, { headers: h, redirect: 'manual' });
+
+      // Server side
+      let r = await vm(`/cdn/${a.bundle}/logo.png?key=${a.key}`);
+      assert.equal(r.status, 307);
+      assert.equal(r.headers.get('location'), `https://edge.example/cdn/${a.bundle}/logo.png?key=${a.key}&route=edge`);
+      r = await vm(`/cdn/${a.bundle}/mid.bin?key=${a.key}`, HTML);
+      assert.equal(r.status, 200, 'normal files stream from the server');
+      assert.ok(Buffer.from(await r.arrayBuffer()).equals(mid));
+      r = await vm(`/cdn/${a.bundle}/big.bin?key=${a.key}`, HTML);
+      assert.equal(r.status, 307);
+      const loc = new URL(r.headers.get('location'));
+      assert.equal(loc.origin + loc.pathname, 'https://edge.example/get.html');
+      const hp = new URLSearchParams(loc.hash.slice(1));
+      assert.equal(hp.get('f'), 'big.bin');
+      assert.equal(Number(hp.get('s')), big.length);
+      assert.equal(hp.get('src'), 'https://edge.example');
+      assert.match(hp.get('native'), /route=native&download=1$/);
+      r = await vm(`/cdn/${a.bundle}/big.bin?key=${a.key}`);
+      assert.equal(r.status, 200, 'tools that are not browsers get the file directly');
+      await r.arrayBuffer();
+      r = await vm(`/cdn/${a.bundle}/big.bin?key=${a.key}`, { Range: 'bytes=10-99', ...HTML });
+      assert.equal(r.status, 206, 'a chunk is served where it is asked');
+      assert.ok(Buffer.from(await r.arrayBuffer()).equals(big.subarray(10, 100)));
+      r = await vm(`/cdn/${a.bundle}/logo.png?key=${a.key}&route=native`);
+      assert.equal(r.status, 200, 'route=native is honoured (no redirect loop)');
+      assert.ok(Buffer.from(await r.arrayBuffer()).equals(logo));
+
+      // Edge side
+      const call = (p, headers = {}) => edge(new Request('https://edge.example' + p, { headers }));
+      r = await call(`/cdn/${a.bundle}/logo.png?key=${a.key}&route=edge`);
+      assert.equal(r.status, 200);
+      assert.ok(Buffer.from(await r.arrayBuffer()).equals(logo));
+      r = await call(`/cdn/${a.bundle}/mid.bin?key=${a.key}`, HTML);
+      assert.equal(r.status, 307);
+      assert.equal(r.headers.get('location'), `${env.base}/cdn/${a.bundle}/mid.bin?key=${a.key}&route=native`);
+      r = await call(`/cdn/${a.bundle}/big.bin?key=${a.key}`, HTML);
+      assert.equal(r.status, 307);
+      assert.match(r.headers.get('location'), /^https:\/\/edge\.example\/get\.html#/);
+      // What the chunked downloader does: parallel Range requests with the key in a header.
+      const parts = await Promise.all([0, 1, 2, 3, 4, 5, 6].map(async (i) => {
+        const x = await call(`/cdn/${a.bundle}/big.bin`, { 'X-FF-Key': a.key, Range: `bytes=${i * 1048576}-${(i + 1) * 1048576 - 1}` });
+        assert.equal(x.status, 206);
+        return Buffer.from(await x.arrayBuffer());
+      }));
+      assert.ok(Buffer.concat(parts).equals(big), 'chunks reassemble into the file');
+    } finally {
+      delete process.env.FF_ORIGIN;
+      delete process.env.FF_ROUTE_SMALL_MB;
+      delete process.env.FF_ROUTE_XL_MB;
+    }
+  }, { edgeUrl: 'https://edge.example', routeSmallBytes: 1024 * 1024, routeXlBytes: 5 * 1024 * 1024 });
+});
+
+test('the chunked downloader page is identical on the server and on Vercel', () => {
+  assert.equal(fs.readFileSync(path.join(root, 'docs/get.html'), 'utf8'), fs.readFileSync(path.join(root, 'vercel/get.html'), 'utf8'));
 });

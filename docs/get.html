@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Download · FastFlare</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23ff6a5c' d='M12 2c1 3.2-.6 5-2.2 6.8C8.3 10.4 7 12 7 14.6 7 17.6 9.3 20 12 20s5-2.4 5-5.4c0-2-1-3.6-2.1-4.6.1 1.6-.6 2.8-1.6 3.2.4-3.6-.6-7.4-1.3-11.2z'/%3E%3C/svg%3E">
+<style>
+  :root { --bg: #0b0e1f; --panel: #12162a; --line: #2c3350; --text: #e8ebf7; --muted: #8b93b5; --flare: #ff8a3d; --pink: #ff4d8d; --ok: #22b573; --bad: #ff6b6b; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: radial-gradient(1200px 600px at 20% -10%, #241a4a 0, transparent 60%), var(--bg); color: var(--text); }
+  main { width: min(520px, 92vw); padding: 34px 30px; border-radius: 22px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 24px 70px rgba(0,0,0,.45); }
+  .brand { font-weight: 800; letter-spacing: -.02em; margin-bottom: 22px; }
+  .brand span { background: linear-gradient(90deg, var(--flare), var(--pink)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  h1 { font-size: 22px; margin: 0 0 4px; word-break: break-all; }
+  .meta { color: var(--muted); margin: 0 0 22px; font-size: 14px; }
+  .bar { height: 10px; border-radius: 5px; background: #0a0d26; border: 1px solid var(--line); overflow: hidden; margin: 18px 0 8px; }
+  .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--flare), var(--pink)); transition: width .25s; }
+  .stats { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  button, a.btn { font: inherit; font-weight: 700; border: 0; border-radius: 12px; padding: 12px 22px; cursor: pointer; color: #1a0d05; background: linear-gradient(90deg, var(--flare), var(--pink)); text-decoration: none; display: inline-block; }
+  button.ghost, a.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  #msg { min-height: 1.5em; margin: 14px 0 0; font-size: 14px; color: var(--muted); }
+  #msg.ok { color: var(--ok); } #msg.err { color: var(--bad); }
+  .note { font-size: 13px; color: var(--muted); margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">Fast<span>Flare</span> Download</div>
+  <h1 id="name">Preparing…</h1>
+  <p class="meta" id="meta"></p>
+  <div class="row">
+    <button id="go" disabled>Download</button>
+    <button id="stop" class="ghost" hidden>Cancel</button>
+    <a id="native" class="btn ghost" href="#">Standard download</a>
+  </div>
+  <div class="bar"><i id="fill"></i></div>
+  <div class="stats"><span id="done">0%</span><span id="speed"></span><span id="eta"></span></div>
+  <p id="msg" role="status" aria-live="polite"></p>
+  <p class="note">This large file downloads in several parts at once over a fast network, then is joined on your device. If it stops, press Download again. If your browser cannot save in parts, use Standard download.</p>
+</main>
+<script>
+(function () {
+  'use strict';
+  var CHUNK = 32 * 1024 * 1024, PARALLEL = 4, TRIES = 4, MEMORY_MAX = 2 * 1024 * 1024 * 1024;
+  var $ = function (id) { return document.getElementById(id); };
+  var h = new URLSearchParams(location.hash.slice(1));
+  var o = { b: h.get('b'), f: h.get('f'), s: Number(h.get('s')), k: h.get('k'), src: (h.get('src') || '').replace(/\/$/, ''), native: h.get('native'), mode: h.get('mode') };
+  // Keep the key out of the address bar and history once it has been read.
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  var size = function (n) { return n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB'; };
+  var msg = function (t, cls) { $('msg').textContent = t; $('msg').className = cls || ''; };
+  if (!o.b || !o.f || !o.k || !o.src || !(o.s >= 0)) { $('name').textContent = 'This download link is incomplete.'; $('native').hidden = true; return; }
+  var fname = o.f.split('/').pop();
+  $('name').textContent = fname;
+  $('meta').textContent = size(o.s) + ' · parallel download';
+  $('native').href = o.native || '#';
+  if (!o.native) $('native').hidden = true;
+
+  var fsApi = typeof window.showSaveFilePicker === 'function' && o.mode !== 'memory';
+  var canMemory = o.s <= MEMORY_MAX;
+  if (!fsApi && !canMemory) {
+    msg('Your browser cannot save files this large in parts. Use Standard download.');
+    $('go').hidden = true;
+    return;
+  }
+  $('go').disabled = false;
+
+  var url = o.src + '/cdn/' + encodeURIComponent(o.b) + '/' + o.f.split('/').map(encodeURIComponent).join('/');
+  var ctrl = null;
+
+  function chunkTask(start, end, sink, progress) {
+    var tries = 0;
+    function attempt() {
+      var got = 0;
+      if (sink.reset) sink.reset(start);
+      return fetch(url, { headers: { Range: 'bytes=' + start + '-' + end, 'X-FF-Key': o.k }, signal: ctrl.signal, cache: 'no-store' })
+        .then(function (r) {
+          if (r.status === 403) throw Object.assign(new Error('The key for this file is not valid.'), { fatal: true });
+          if (r.status !== 206) throw new Error('HTTP ' + r.status);
+          var reader = r.body.getReader();
+          var pos = start;
+          function pump() {
+            return reader.read().then(function (x) {
+              if (x.done) return;
+              var v = x.value;
+              var at = pos;
+              pos += v.length; got += v.length; progress(v.length);
+              return Promise.resolve(sink(at, v, start)).then(pump);
+            });
+          }
+          return pump().then(function () { if (pos !== end + 1) throw new Error('short chunk'); });
+        })
+        .catch(function (e) {
+          progress(-got);
+          if (e.fatal || e.name === 'AbortError' || ++tries >= TRIES) throw e;
+          return new Promise(function (r) { setTimeout(r, 800 * tries); }).then(attempt);
+        });
+    }
+    return attempt();
+  }
+
+  function run(sink) {
+    var ranges = [];
+    for (var a = 0; a < o.s; a += CHUNK) ranges.push([a, Math.min(o.s, a + CHUNK) - 1]);
+    var done = 0, t0 = performance.now(), lastT = t0, lastB = 0, speed = 0;
+    var timer = setInterval(function () {
+      var t = performance.now();
+      var inst = (done - lastB) / ((t - lastT) / 1000);
+      speed = speed ? speed * 0.7 + inst * 0.3 : inst;
+      lastT = t; lastB = done;
+      $('speed').textContent = (speed * 8 / 1e6).toFixed(1) + ' Mbps';
+      $('eta').textContent = speed > 0 ? Math.ceil((o.s - done) / speed) + ' s left' : '';
+    }, 1000);
+    var progress = function (n) { done += n; var p = o.s ? done / o.s * 100 : 100; $('fill').style.width = p + '%'; $('done').textContent = p.toFixed(1) + '%'; };
+    var next = 0;
+    function worker() {
+      if (next >= ranges.length) return Promise.resolve();
+      var r = ranges[next++];
+      return chunkTask(r[0], r[1], sink, progress).then(worker);
+    }
+    var workers = [];
+    for (var i = 0; i < Math.min(PARALLEL, ranges.length); i++) workers.push(worker());
+    return Promise.all(workers).finally(function () { clearInterval(timer); });
+  }
+
+  function start() {
+    ctrl = new AbortController();
+    $('go').disabled = true; $('stop').hidden = false; msg('Downloading…');
+    var p;
+    if (fsApi) {
+      var writable;
+      p = window.showSaveFilePicker({ suggestedName: fname })
+        .then(function (handle) { return handle.createWritable(); })
+        .then(function (w) {
+          writable = w;
+          return w.truncate(o.s).then(function () {
+            return run(function (at, v) { return writable.write({ type: 'write', position: at, data: v }); });
+          });
+        })
+        .then(function () { return writable.close(); }, function (e) { if (writable) writable.abort().catch(function () {}); throw e; });
+    } else {
+      var chunks = {};
+      var sink = function (at, v, s) { chunks[s].push(v); };
+      sink.reset = function (s) { chunks[s] = []; };
+      p = run(sink).then(function () {
+        var order = Object.keys(chunks).map(Number).sort(function (x, y) { return x - y; });
+        var blob = new Blob([].concat.apply([], order.map(function (s) { return chunks[s]; })), { type: 'application/octet-stream' });
+        chunks = null;
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
+      });
+    }
+    p.then(function () { msg('Download complete.', 'ok'); $('fill').style.width = '100%'; $('done').textContent = '100%'; $('eta').textContent = ''; })
+      .catch(function (e) {
+        if (e.name === 'AbortError') msg('Cancelled.');
+        else msg((e.fatal ? e.message : 'The download stopped (' + e.message + '). Press Download to try again, or use Standard download.'), 'err');
+      })
+      .finally(function () { $('go').disabled = false; $('stop').hidden = true; });
+  }
+  $('go').onclick = start;
+  $('stop').onclick = function () { if (ctrl) ctrl.abort(); };
+})();
+</script>
+</body>
+</html>

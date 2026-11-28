@@ -18,6 +18,7 @@ import { Readable, pipeline } from 'node:stream';
 import { httpError, send, CORS } from '../util.js';
 import * as F from './format.js';
 import { localStore, supabaseStore, githubStore, partCache } from './stores.js';
+import { pickRoute, rangeSpan, chunkedPageUrl } from './route.js';
 
 const MB = 1024 * 1024;
 const ID_RE = /^[A-Za-z0-9_-]{16}$/;
@@ -336,8 +337,49 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
     } else selected = b.files;
     if (!selected.length) throw httpError(404, 'empty_bundle');
 
+    // Smart routing: small files to the Vercel edge, extra-large ones to the chunked downloader,
+    // everything else streamed from here.
+    const single = selected.length === 1 && q.get('zip') !== '1';
+    const total = selected.reduce((a, f) => a + f.size, 0);
+    const keyInUrl = q.get('key');
+    const route = pickRoute({
+      asked: q.get('route'),
+      total,
+      single,
+      span: single ? rangeSpan(req.headers.range, selected[0].size) : null,
+      html: /text\/html/.test(String(req.headers.accept || '')) && !!keyInUrl,
+      smallMax: c.routeSmallBytes,
+      xlMin: c.routeXlBytes,
+      haveEdge: !!c.edgeUrl,
+      here: 'native',
+    });
+    const origin = c.publicUrl || `http://${req.headers.host}`;
+    if (route === 'edge') {
+      const qs = new URLSearchParams(q);
+      qs.set('route', 'edge');
+      res.writeHead(307, { ...CORS, Location: `${c.edgeUrl}${url.pathname}?${qs}`, 'Cache-Control': 'no-store' });
+      return res.end();
+    }
+    if (route === 'chunked' && keyInUrl) {
+      const f = selected[0];
+      const qs = new URLSearchParams(q);
+      qs.set('route', 'native');
+      qs.set('download', '1');
+      const loc = chunkedPageUrl({
+        pageBase: c.edgeUrl || origin,
+        chunkBase: c.edgeUrl || origin,
+        nativeUrl: `${origin}${url.pathname}?${qs}`,
+        bundle: b.id,
+        name: f.name,
+        size: f.size,
+        key: keyInUrl,
+      });
+      res.writeHead(307, { ...CORS, Location: loc, 'Cache-Control': 'no-store' });
+      return res.end();
+    }
+
     // One file: send it as itself, with Range support for resuming and video seeking.
-    if (selected.length === 1 && q.get('zip') !== '1') {
+    if (single) {
       const f = selected[0];
       let start = 0;
       let end = f.size - 1;

@@ -59,6 +59,17 @@
   </ol>
   <div class="note"><strong>About the key.</strong> AES-256 is the standard for encrypting files, and it is far stronger than a 2048-bit RSA key. Lose the key and the files cannot be recovered by anyone, including you. Save it in a password manager or on your own server.</div>
 
+  <h2>Smart Routing</h2>
+  <p>Every download link is the same, and FastFlare picks the fastest path for the file behind it:</p>
+  <table>
+    <tr><th>File</th><th>Route</th><th>Why</th></tr>
+    <tr><td>Small (up to 25 MB)</td><td>Vercel edge</td><td>Served from the edge node nearest the visitor, and cached there.</td></tr>
+    <tr><td>Normal (25 to 500 MB)</td><td>Your server, directly</td><td>One steady stream, with resuming. No time limit.</td></tr>
+    <tr><td>Extra large (over 500 MB)</td><td>Chunked download</td><td>The browser opens a download page that fetches the file in 32 MB pieces, four at a time, through the edge, and joins them on the visitor's device. Each piece finishes well inside Vercel's 300-second limit.</td></tr>
+  </table>
+  <p>Download tools such as <code>curl</code> and download managers always get the file directly, and a request for part of a file (video seeking, resuming) is answered wherever it arrives. Add <code>&amp;route=edge</code>, <code>&amp;route=native</code> or <code>&amp;route=chunked</code> to a link to force a route. Change the sizes with <code>FF_ROUTE_SMALL_MB</code> and <code>FF_ROUTE_XL_MB</code>, set to the same values on the server and on Vercel.</p>
+  <p>Chunked downloads save straight to disk in Chrome and Edge. Other browsers join the pieces in memory for files up to 2 GB; above that, the page offers the standard download.</p>
+
   <h2>Upload</h2>
   <div class="tool">
     <div class="row">
@@ -162,7 +173,7 @@ echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></
   <ul>
     <li>Supabase's free plan allows 1 GB of storage, 50 MB per object and 5 GB of downloads a month. The server cache means each popular file is usually read from Supabase once.</li>
     <li>GitHub asks that repositories stay under 5 GB. Deleting a file removes it from the <code>cdn</code> branch, but it stays in the branch history and still counts. Cloning the repository normally also fetches this branch: use <code>git clone --single-branch</code> for the code only.</li>
-    <li>Vercel's free plan includes 100 GB of downloads a month, and an edge response can stream for up to 300 seconds. Downloads over 2 GB (<code>FF_EDGE_MAX_MB</code> on Vercel) are handed to your server instead. Files stored on your server still travel from it to the edge, so for the fastest delivery keep large files on GitHub.</li>
+    <li>Vercel's free plan includes 100 GB of downloads a month, and an edge response can stream for up to 300 seconds, which is why large files go in chunks. Files stored on your server still travel from it to the edge, so for the fastest chunked downloads keep large files on GitHub.</li>
     <li>Small single files opened by a <code>?key=</code> link are cached on Vercel's network for a day, so repeat downloads do not touch Supabase or your server at all.</li>
   </ul>
 </main>
