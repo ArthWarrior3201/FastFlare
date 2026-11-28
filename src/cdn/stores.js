@@ -69,6 +69,23 @@ export function supabaseStore({ url, key, bucket = 'ffcdn', fetchImpl = fetch })
       }
       return {};
     },
+    // Time-limited links the edge function can read directly.
+    async signUrls(paths, seconds) {
+      const res = await check(
+        await fetchImpl(`${base}/storage/v1/object/sign/${encodeURIComponent(bucket)}`, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expiresIn: Math.floor(seconds), paths }),
+        }),
+        'Supabase sign',
+      );
+      const list = await res.json();
+      return paths.map((p) => {
+        const hit = list.find((x) => x.path === p);
+        if (!hit || hit.error || !hit.signedURL) throw new Error('Supabase sign: no link for ' + p);
+        return `${base}/storage/v1${hit.signedURL.startsWith('/') ? '' : '/'}${hit.signedURL}`;
+      });
+    },
     async download(p, _ref, dest) {
       const res = await check(
         await fetchImpl(`${base}/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${p.split('/').map(encodeURIComponent).join('/')}`, { headers }),
@@ -143,6 +160,7 @@ export function githubStore({ repo, branch = 'cdn', token, api = 'https://api.gi
         for (const it of items) await fsp.unlink(it.file).catch(() => {});
         return { commit: sha };
       }),
+    rawUrl: (p, ref) => `${raw}/${repo}/${ref.commit}/${p}`,
     async download(p, ref, dest) {
       const res = await check(
         await fetchImpl(`${raw}/${repo}/${ref.commit}/${p}`, { headers: { Authorization: `token ${token}`, 'User-Agent': UA } }),

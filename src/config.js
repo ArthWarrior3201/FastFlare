@@ -71,6 +71,7 @@ export function loadConfig(overrides = {}) {
     signupsPerIpPerDay: int(env.FF_SIGNUPS_PER_DAY, 5),
     cdn: {
       token: env.FF_CDN_TOKEN || '',
+      edgeUrl: (env.FF_CDN_EDGE_URL || '').replace(/\/$/, ''),
       maxBytes: int(env.FF_CDN_MAX_MB, 4096) * 1048576,
       smallMaxBytes: int(env.FF_CDN_SMALL_MB, 5) * 1048576,
       githubMaxBytes: int(env.FF_CDN_GITHUB_MAX_MB, 1024) * 1048576,
@@ -83,6 +84,7 @@ export function loadConfig(overrides = {}) {
         repo: env.FF_CDN_GITHUB_REPO || 'ArthWarrior3201/FastFlare',
         branch: env.FF_CDN_GITHUB_BRANCH || 'cdn',
         token: env.FF_CDN_GITHUB_TOKEN || '',
+        public: env.FF_CDN_GITHUB_PUBLIC !== '0',
         api: env.FF_CDN_GITHUB_API || 'https://api.github.com',
         raw: env.FF_CDN_GITHUB_RAW || 'https://raw.githubusercontent.com',
       },

@@ -1,0 +1,5 @@
+{
+  "name": "fastflare-cdn-edge",
+  "private": true,
+  "type": "module"
+}

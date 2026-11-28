@@ -229,7 +229,7 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
       });
       for (const o of replaced) removeFile(bundleId, o).catch((e) => log(`cdn: cleanup failed: ${e.message}`));
 
-      const base = c.publicUrl || '';
+      const base = c.edgeUrl || c.publicUrl || '';
       log(`cdn: stored ${bundleId}/${name} (${r.size} bytes) on ${tier}`);
       send(
         res,
@@ -394,6 +394,64 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
     send(res, 200, { ok: true, filesLeft: left }, CORS);
   }
 
+  // ---- Edge delivery (Vercel) -------------------------------------------------------------------
+  // The edge function sends the visitor's key here. If it matches, it gets the file list and a
+  // short-lived link to every encrypted part, then fetches and decrypts the parts itself, close to
+  // the visitor. Parts on Supabase and GitHub never pass through this server.
+  const EDGE_TTL = 6 * 60 * 60 * 1000;
+  const partSig = (bundle, fileId, p, exp) => crypto.createHmac('sha256', config.secret).update(`ffcdn-part|${bundle}|${fileId}|${p}|${exp}`).digest('base64url');
+
+  async function edgeMeta(req, res, bundleId) {
+    const b = await loadBundle(bundleId);
+    if (!b) throw httpError(404, 'not_found');
+    const keyRaw = F.parseKey(String(req.headers['x-ff-key'] || ''));
+    if (!F.keyMatches(keyRaw, b.keyCheck)) throw httpError(403, 'invalid_key');
+    const origin = c.publicUrl || `http://${req.headers.host}`;
+    const exp = Date.now() + EDGE_TTL;
+    const vmUrl = (f, p) => `${origin}/cdn/part/${b.id}/${f.id}/${p}?exp=${exp}&sig=${partSig(b.id, f.id, p, exp)}`;
+    const files = [];
+    for (const f of b.files) {
+      const paths = Array.from({ length: f.parts }, (_, p) => objectPath(b.id, f, p));
+      let src = null;
+      try {
+        if (f.tier === 'supabase' && stores.supabase.ready) src = await stores.supabase.signUrls(paths, EDGE_TTL / 1000);
+        else if (f.tier === 'github' && stores.github.ready && c.github.public !== false) src = paths.map((p) => stores.github.rawUrl(p, f.ref));
+      } catch (e) {
+        log(`cdn: direct links failed, using the server: ${e.message}`);
+      }
+      files.push({ id: f.id, name: f.name, size: f.size, crc32: f.crc32, type: f.type, parts: f.parts, src: src || paths.map((_, p) => vmUrl(f, p)) });
+    }
+    send(res, 200, { bundle: b.id, files }, { 'Cache-Control': 'no-store' });
+  }
+
+  // Encrypted bytes of one part, for the edge function. Useless without the key.
+  async function signedPart(req, res, url, bundleId, fileId, p) {
+    const exp = Number(url.searchParams.get('exp'));
+    const sig = String(url.searchParams.get('sig') || '');
+    const want = partSig(bundleId, fileId, p, exp);
+    if (!exp || exp < Date.now() || sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) throw httpError(403, 'link_expired');
+    const b = await loadBundle(bundleId);
+    const f = b && b.files.find((x) => x.id === fileId);
+    const n = Number(p);
+    if (!f || !Number.isInteger(n) || n < 0 || n >= f.parts) throw httpError(404, 'not_found');
+    const total = F.partSize(f.size, n);
+    let start = 0;
+    let end = total - 1;
+    let status = 200;
+    const h = { 'Content-Type': 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, no-store' };
+    const m = String(req.headers.range || '').match(/^bytes=(\d+)-(\d*)$/);
+    if (m) {
+      start = Number(m[1]);
+      end = m[2] ? Math.min(Number(m[2]), total - 1) : total - 1;
+      if (start > end) throw httpError(416, 'bad_range');
+      status = 206;
+      h['Content-Range'] = `bytes ${start}-${end}/${total}`;
+    }
+    h['Content-Length'] = end - start + 1;
+    const read = partReader(bundleId, f);
+    return stream(res, status, h, read(n, start, end), req.method === 'HEAD');
+  }
+
   async function bundles(req, res) {
     requireOwner(req);
     const out = [];
@@ -426,6 +484,8 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
     if (first === 'upload' && (req.method === 'PUT' || req.method === 'POST')) return upload(req, res, url);
     if (first === 'status' && req.method === 'GET') return status(req, res);
     if (first === 'bundles' && req.method === 'GET') return bundles(req, res);
+    if (first === 'edge' && req.method === 'GET' && ID_RE.test(segs[1] || '')) return edgeMeta(req, res, segs[1]);
+    if (first === 'part' && (req.method === 'GET' || req.method === 'HEAD') && segs.length === 4) return signedPart(req, res, url, segs[1], segs[2], segs[3]);
     if (!ID_RE.test(first || '')) throw httpError(404, 'not_found');
     const name = segs.length > 1 ? cleanName(segs.slice(1).join('/')) : null;
     if (segs.length > 1 && !name) throw httpError(404, 'file_not_found');

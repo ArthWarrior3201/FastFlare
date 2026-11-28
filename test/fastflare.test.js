@@ -424,6 +424,13 @@ function mockCloud() {
     const u = new URL(req.url, 'http://x');
     const p = decodeURIComponent(u.pathname);
     const json = (s, o) => { res.writeHead(s, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+    if (req.method === 'GET' && p.startsWith('/storage/v1/object/sign/ffcdn/')) {
+      calls.signedGet = (calls.signedGet || 0) + 1;
+      const k = p.slice('/storage/v1/object/sign/ffcdn/'.length);
+      if (u.searchParams.get('token') !== 'ok' || !supa.has(k)) { res.writeHead(400); return res.end(); }
+      res.writeHead(200);
+      return res.end(supa.get(k)); // ignores Range on purpose: the edge must cope
+    }
     if (p.startsWith('/storage/')) {
       if (req.headers.apikey !== 'supa-key') return json(401, { error: 'auth' });
       let m;
@@ -437,6 +444,10 @@ function mockCloud() {
         if (!supa.has(m[1])) return json(404, { error: 'not found' });
         res.writeHead(200);
         return res.end(supa.get(m[1]));
+      }
+      if (req.method === 'POST' && p === '/storage/v1/object/sign/ffcdn') {
+        const b = JSON.parse(body);
+        return json(200, b.paths.map((x) => ({ path: x, error: null, signedURL: `/object/sign/ffcdn/${x}?token=ok` })));
       }
       if (req.method === 'DELETE' && p === '/storage/v1/object/ffcdn') {
         for (const k of JSON.parse(body).prefixes) supa.delete(k);
@@ -600,5 +611,61 @@ test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, 
     await fetch(`${env.base}/cdn/${bundle}`, { method: 'DELETE', headers: { Authorization: 'Bearer owner-token' } });
     assert.equal((await get(`/cdn/${bundle}?key=${key}&list=1`)).status, 404);
     assert.ok(![...env.cloud.supa.keys()].some((k) => k.startsWith(bundle)), 'Supabase parts removed');
+  });
+});
+
+test('CDN edge function: decrypts at the edge from direct links, ranges, zip, wrong key, large-file handoff', { timeout: 120000 }, async () => {
+  const { default: edge } = await import('../vercel/api/cdn.js');
+  await withCdn(async (env) => {
+    process.env.FF_ORIGIN = env.base;
+    const put = (name, data, q = '', h = {}) =>
+      fetch(`${env.base}/cdn/upload?name=${encodeURIComponent(name)}${q}`, { method: 'PUT', headers: { Authorization: 'Bearer owner-token', ...h }, body: data }).then((r) => r.json());
+    const logo = crypto.randomBytes(40_000);
+    const mid = crypto.randomBytes(7 * 1024 * 1024 + 5);
+    const big = crypto.randomBytes(46 * 1024 * 1024);
+    const a = await put('logo.png', logo);
+    await put('dl/setup.bin', mid, `&bundle=${a.bundle}`, { 'X-FF-Key': a.key });
+    await put('main.iso', big, `&bundle=${a.bundle}&tier=vm`, { 'X-FF-Key': a.key });
+    const call = (p, headers = {}) => edge(new Request('https://edge.example' + p, { headers }));
+
+    const vmGets = env.cloud.calls.supaGet;
+    let r = await call(`/cdn/${a.bundle}/logo.png?key=${a.key}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get('x-fastflare-edge'), '1');
+    assert.match(r.headers.get('cache-control'), /s-maxage/, 'small files are cached at the edge');
+    assert.ok(Buffer.from(await r.arrayBuffer()).equals(logo));
+    assert.ok(env.cloud.calls.signedGet >= 1, 'the edge read Supabase directly');
+    assert.equal(env.cloud.calls.supaGet, vmGets, 'the server did not fetch the part');
+
+    const raws = env.cloud.calls.rawGet;
+    r = await call(`/cdn/${a.bundle}/dl/setup.bin`, { 'X-FF-Key': a.key, Range: 'bytes=1048570-1048590' });
+    assert.equal(r.status, 206);
+    assert.ok(Buffer.from(await r.arrayBuffer()).equals(mid.subarray(1048570, 1048591)));
+    assert.ok(env.cloud.calls.rawGet > raws, 'the edge read GitHub directly');
+
+    r = await call(`/cdn/${a.bundle}/main.iso?key=${a.key}`, { Range: 'bytes=46137300-46137400' });
+    assert.ok(Buffer.from(await r.arrayBuffer()).equals(big.subarray(46137300, 46137401)), 'server-stored parts via signed links');
+
+    r = await call(`/cdn/${a.bundle}?key=${a.key}&files=logo.png,dl/setup.bin`);
+    const z = readZip(Buffer.from(await r.arrayBuffer()));
+    assert.ok(z['logo.png'].data.equals(logo) && z['dl/setup.bin'].data.equals(mid));
+
+    const list = await (await call(`/cdn/${a.bundle}?key=${a.key}&list=1`)).json();
+    assert.equal(list.files.length, 3);
+    assert.equal((await call(`/cdn/${a.bundle}/logo.png?key=ffk_${'C'.repeat(43)}`)).status, 403);
+    assert.equal((await call(`/cdn/${a.bundle}/logo.png`)).status, 403);
+    assert.equal((await call(`/cdn/${a.bundle}/nope.png?key=${a.key}`)).status, 404);
+
+    process.env.FF_EDGE_MAX_MB = '1';
+    r = await call(`/cdn/${a.bundle}/main.iso?key=${a.key}`);
+    assert.equal(r.status, 307);
+    assert.equal(r.headers.get('location'), `${env.base}/cdn/${a.bundle}/main.iso?key=${a.key}`);
+    delete process.env.FF_EDGE_MAX_MB;
+
+    const t = await put('t.txt', 'tamper');
+    env.cloud.tamperSupabase(t.bundle + '/');
+    assert.equal((await call(`/cdn/${t.bundle}/t.txt?key=${t.key}`)).status, 502, 'altered parts are refused at the edge');
+    assert.equal((await fetch(`${env.base}/cdn/part/${a.bundle}/x/0?exp=${Date.now() + 1e5}&sig=bad`)).status, 403, 'part links must be signed');
+    delete process.env.FF_ORIGIN;
   });
 });

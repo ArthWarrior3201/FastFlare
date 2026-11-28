@@ -42,7 +42,7 @@
 </header>
 <main>
   <h1>Encrypted File Delivery <em>Across Three Stores</em></h1>
-  <p class="lead">Upload once. FastFlare encrypts every file, splits it into parts, and spreads them across your server, Supabase and GitHub. Downloads need the key you were given at upload, and nothing is decrypted without it.</p>
+  <p class="lead">Upload once. FastFlare encrypts every file, splits it into parts, and spreads them across your server, Supabase and GitHub. Downloads run on Vercel's edge network, close to every visitor, and need the key you were given at upload.</p>
 
   <h2>How It Works</h2>
   <div class="tiers">
@@ -54,7 +54,8 @@
     <li>You upload through your FastFlare server. It encrypts each file with <strong>AES-256-GCM</strong> using a new random 256-bit key, in 1 MB segments that each carry their own tamper check.</li>
     <li>The encrypted parts (<code>.ffencrypted</code>) go to the store that suits the file's size. Supabase and GitHub only ever hold encrypted data with meaningless names.</li>
     <li>You get the bundle ID and the key, <strong>once</strong>. The server keeps only a fingerprint of the key, so it can check requests but cannot decrypt anything on its own.</li>
-    <li>A download sends the key. The server checks it, fetches the parts, decrypts them, verifies every segment and streams the file. A wrong key gets nothing, and an altered part stops the download.</li>
+    <li>A download goes to the Vercel edge node nearest the visitor. The edge asks your server whether the key is right; if it is, the server hands back short-lived links to the encrypted parts. The edge fetches them straight from Supabase and GitHub, decrypts and checks every segment, and streams the file. A wrong key gets nothing, and an altered part stops the download.</li>
+    <li>Your server only checks keys and hands out links, so its own connection is no longer the limit for files stored on Supabase and GitHub.</li>
   </ol>
   <div class="note"><strong>About the key.</strong> AES-256 is the standard for encrypting files, and it is far stronger than a 2048-bit RSA key. Lose the key and the files cannot be recovered by anyone, including you. Save it in a password manager or on your own server.</div>
 
@@ -92,6 +93,7 @@
   <h2>Download</h2>
   <div class="tool">
     <div class="row">
+      <div><label for="d-edge">Download address (Vercel)</label><input id="d-edge" placeholder="https://your-project.vercel.app"></div>
       <div><label for="d-bundle">Bundle ID</label><input id="d-bundle"></div>
       <div><label for="d-key">Key</label><input id="d-key" type="password" autocomplete="off" placeholder="ffk_…"></div>
     </div>
@@ -102,7 +104,7 @@
   </div>
 
   <h2>Links and API</h2>
-  <p>Every link carries the key, either as <code>?key=</code> or as an <code>X-FF-Key</code> header. Use the header from your own code when the key should not appear in a URL.</p>
+  <p>Share links on your Vercel address, for example <code>https://your-project.vercel.app/cdn/BUNDLE?key=KEY</code>. The same paths also work directly on your server. Every link carries the key, either as <code>?key=</code> or as an <code>X-FF-Key</code> header. Use the header from your own code when the key should not appear in a URL.</p>
   <table>
     <tr><th>Request</th><th>Returns</th></tr>
     <tr><td><code>GET /cdn/BUNDLE?key=KEY</code></td><td>Every file: one file as itself, several as a <code>.zip</code>.</td></tr>
@@ -136,6 +138,10 @@ echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></
 <pre><code>echo "FF_CDN_GITHUB_TOKEN=github_pat_YOUR_TOKEN" | sudo tee -a /etc/fastflare.env</code></pre>
       Parts are committed to the <code>cdn</code> branch. To use another repository or branch, set <code>FF_CDN_GITHUB_REPO=owner/name</code> and <code>FF_CDN_GITHUB_BRANCH</code>.
     </li>
+    <li><strong>Vercel (fast downloads)</strong>
+      Sign in at vercel.com with GitHub and choose <em>Add New → Project</em>. Import the <strong>FastFlare</strong> repository, set <em>Root Directory</em> to <code>vercel</code>, and under <em>Environment Variables</em> add <code>FF_ORIGIN</code> = <code>https://129-225-87-247.sslip.io</code>. Press <em>Deploy</em>. Copy the address Vercel gives you and tell the server about it, so upload links use it:
+<pre><code>echo "FF_CDN_EDGE_URL=https://YOUR-PROJECT.vercel.app" | sudo tee -a /etc/fastflare.env</code></pre>
+    </li>
     <li><strong>Restart</strong>
 <pre><code>sudo systemctl restart fastflare</code></pre>
       Check what is set up with <code>GET /cdn/status</code>, or upload a test file above.
@@ -156,7 +162,8 @@ echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></
   <ul>
     <li>Supabase's free plan allows 1 GB of storage, 50 MB per object and 5 GB of downloads a month. The server cache means each popular file is usually read from Supabase once.</li>
     <li>GitHub asks that repositories stay under 5 GB. Deleting a file removes it from the <code>cdn</code> branch, but it stays in the branch history and still counts. Cloning the repository normally also fetches this branch: use <code>git clone --single-branch</code> for the code only.</li>
-    <li>Every download passes through your server, because that is where files are decrypted. Oracle's free micro server manages roughly 50 Mbps, so large files serve a few people at a time.</li>
+    <li>Vercel's free plan includes 100 GB of downloads a month, and an edge response can stream for up to 300 seconds. Downloads over 2 GB (<code>FF_EDGE_MAX_MB</code> on Vercel) are handed to your server instead. Files stored on your server still travel from it to the edge, so for the fastest delivery keep large files on GitHub.</li>
+    <li>Small single files opened by a <code>?key=</code> link are cached on Vercel's network for a day, so repeat downloads do not touch Supabase or your server at all.</li>
   </ul>
 </main>
 <footer>FastFlare</footer>
@@ -167,6 +174,7 @@ echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></
   var defApi = /github\.io$/.test(location.hostname) || location.protocol === 'file:' ? 'https://129-225-87-247.sslip.io' : location.origin;
   $('u-api').value = store.get('ffcdn-api') || defApi;
   $('u-token').value = store.get('ffcdn-token') || '';
+  $('d-edge').value = store.get('ffcdn-edge') || '';
   var api = function () { return $('u-api').value.trim().replace(/\/$/, ''); };
   var size = function (n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB'; };
   var ERR = {
@@ -243,7 +251,7 @@ echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></
   function showKey(j) {
     $('o-bundle').textContent = j.bundle;
     $('o-key').textContent = j.key;
-    $('o-all').textContent = api() + '/cdn/' + j.bundle + '?key=' + j.key;
+    $('o-all').textContent = j.bundleUrl + '?key=' + j.key;
     $('u-out').classList.remove('hidden');
   }
   $('o-save').onclick = function () {
@@ -263,7 +271,9 @@ echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></
     var b = $('d-bundle').value.trim(), k = $('d-key').value.trim();
     $('d-list').innerHTML = ''; $('d-all').classList.add('hidden'); $('d-msg').className = 'msg'; $('d-msg').textContent = 'Opening…';
     if (!b || !k) { $('d-msg').textContent = 'Enter the bundle ID and key.'; $('d-msg').className = 'msg err'; return; }
-    var base = api() + '/cdn/' + encodeURIComponent(b);
+    var edge = $('d-edge').value.trim().replace(/\/$/, '');
+    store.set('ffcdn-edge', edge);
+    var base = (edge || api()) + '/cdn/' + encodeURIComponent(b);
     fetch(base + '?list=1', { headers: { 'X-FF-Key': k } })
       .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(errText(j.error)); return j; }); })
       .then(function (j) {
