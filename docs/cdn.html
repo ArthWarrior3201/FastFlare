@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDN · FastFlare</title>
+<meta name="description" content="Encrypted file delivery across your VM, Supabase and GitHub. Every file is locked with its own key.">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .tool { border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin: 18px 0; background: linear-gradient(180deg, var(--panel2), var(--panel)); }
+  .tool .row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 12px; }
+  .tool input, .tool select { width: 100%; box-sizing: border-box; }
+  .drop { border: 2px dashed var(--line); border-radius: 14px; padding: 26px; text-align: center; color: var(--muted); cursor: pointer; margin: 6px 0 14px; }
+  .drop.over { border-color: var(--flare); color: var(--text); }
+  .files { list-style: none; padding: 0; margin: 10px 0; }
+  .files li { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .files .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--panel); overflow: hidden; }
+  .files .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--flare), var(--flare2)); transition: width .2s; }
+  .files .ok { color: var(--ok); } .files .bad { color: var(--bad); }
+  .kv { display: grid; grid-template-columns: max-content 1fr auto; gap: 8px 12px; align-items: center; margin: 12px 0; }
+  .kv code { word-break: break-all; }
+  .kv button, .mini { padding: 4px 12px; font-size: 13px; }
+  .msg { min-height: 1.4em; margin: 8px 0 0; } .msg.err { color: var(--bad); }
+  .hidden { display: none; }
+  .tiers { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin: 16px 0; }
+  .tiers div { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .tiers b { display: block; font-size: 17px; margin-bottom: 4px; }
+  .tiers span { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">Fast<span>Flare</span></a>
+  <nav>
+    <a href="quickstart.html">Quick Start</a>
+    <a href="captcha.html">Bot Protection</a>
+    <a href="cdn.html" aria-current="page">CDN</a>
+    <a href="envtime.html">Time Server (NTP)</a>
+    <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
+  </nav>
+</header>
+<main>
+  <h1>Encrypted File Delivery <em>Across Three Stores</em></h1>
+  <p class="lead">Upload once. FastFlare encrypts every file, splits it into parts, and spreads them across your server, Supabase and GitHub. Downloads need the key you were given at upload, and nothing is decrypted without it.</p>
+
+  <h2>How It Works</h2>
+  <div class="tiers">
+    <div><b>Supabase</b><span>Small files up to 5 MB: logos, icons, images, stylesheets. Fast, and cached on the server so popular files are fetched once.</span></div>
+    <div><b>GitHub</b><span>Files from 5 MB to 1 GB, stored on the <code>cdn</code> branch as encrypted parts of about 44 MB each.</span></div>
+    <div><b>Your Server</b><span>Main files: anything over 1 GB, anything you send there on purpose, and everything else when the other stores are full or not set up.</span></div>
+  </div>
+  <ol>
+    <li>You upload through your FastFlare server. It encrypts each file with <strong>AES-256-GCM</strong> using a new random 256-bit key, in 1 MB segments that each carry their own tamper check.</li>
+    <li>The encrypted parts (<code>.ffencrypted</code>) go to the store that suits the file's size. Supabase and GitHub only ever hold encrypted data with meaningless names.</li>
+    <li>You get the bundle ID and the key, <strong>once</strong>. The server keeps only a fingerprint of the key, so it can check requests but cannot decrypt anything on its own.</li>
+    <li>A download sends the key. The server checks it, fetches the parts, decrypts them, verifies every segment and streams the file. A wrong key gets nothing, and an altered part stops the download.</li>
+  </ol>
+  <div class="note"><strong>About the key.</strong> AES-256 is the standard for encrypting files, and it is far stronger than a 2048-bit RSA key. Lose the key and the files cannot be recovered by anyone, including you. Save it in a password manager or on your own server.</div>
+
+  <h2>Upload</h2>
+  <div class="tool">
+    <div class="row">
+      <div><label for="u-api">FastFlare server</label><input id="u-api"></div>
+      <div><label for="u-token">Upload token</label><input id="u-token" type="password" autocomplete="off" placeholder="Your FF_CDN_TOKEN"></div>
+      <div><label for="u-tier">Store</label>
+        <select id="u-tier"><option value="auto">Automatic (by size)</option><option value="vm">My server</option><option value="supabase">Supabase</option><option value="github">GitHub</option></select></div>
+    </div>
+    <details id="u-addto"><summary>Add to an existing bundle</summary>
+      <div class="row" style="margin-top:10px">
+        <div><label for="u-bundle">Bundle ID</label><input id="u-bundle"></div>
+        <div><label for="u-key">Key</label><input id="u-key" type="password" autocomplete="off" placeholder="ffk_…"></div>
+      </div>
+      <p style="color:var(--muted);font-size:14px">A file with the same name as one already in the bundle replaces it.</p>
+    </details>
+    <div class="drop" id="drop" tabindex="0" role="button">Drop files here or click to choose</div>
+    <input type="file" id="pick" multiple hidden>
+    <ul class="files" id="queue"></ul>
+    <button class="btn" id="u-go" disabled>Upload</button>
+    <p class="msg" id="u-msg" role="status"></p>
+    <div id="u-out" class="hidden">
+      <div class="note"><strong>Save this key now.</strong> It is shown only once and cannot be recovered.</div>
+      <div class="kv">
+        <span>Bundle</span><code id="o-bundle"></code><button class="btn ghost" data-copy="o-bundle">Copy</button>
+        <span>Key</span><code id="o-key"></code><button class="btn ghost" data-copy="o-key">Copy</button>
+        <span>All files</span><code id="o-all"></code><button class="btn ghost" data-copy="o-all">Copy</button>
+      </div>
+      <button class="btn ghost" id="o-save">Save Key File</button>
+    </div>
+  </div>
+
+  <h2>Download</h2>
+  <div class="tool">
+    <div class="row">
+      <div><label for="d-bundle">Bundle ID</label><input id="d-bundle"></div>
+      <div><label for="d-key">Key</label><input id="d-key" type="password" autocomplete="off" placeholder="ffk_…"></div>
+    </div>
+    <button class="btn" id="d-go">Open Bundle</button>
+    <p class="msg" id="d-msg" role="status"></p>
+    <ul class="files" id="d-list"></ul>
+    <p id="d-all" class="hidden"><a class="btn" id="d-zip" href="#">Download All</a></p>
+  </div>
+
+  <h2>Links and API</h2>
+  <p>Every link carries the key, either as <code>?key=</code> or as an <code>X-FF-Key</code> header. Use the header from your own code when the key should not appear in a URL.</p>
+  <table>
+    <tr><th>Request</th><th>Returns</th></tr>
+    <tr><td><code>GET /cdn/BUNDLE?key=KEY</code></td><td>Every file: one file as itself, several as a <code>.zip</code>.</td></tr>
+    <tr><td><code>GET /cdn/BUNDLE?key=KEY&amp;files=logo.png,app.css</code></td><td>Only those files.</td></tr>
+    <tr><td><code>GET /cdn/BUNDLE/logo.png?key=KEY</code></td><td>One file. Images, audio, video and PDFs open in the browser, so this works in <code>&lt;img src&gt;</code>. Supports <code>Range</code> for resuming and seeking. Add <code>&amp;download=1</code> to force a download.</td></tr>
+    <tr><td><code>GET /cdn/BUNDLE?key=KEY&amp;list=1</code></td><td>File names, sizes and stores as JSON.</td></tr>
+    <tr><td><code>PUT /cdn/upload?name=FILE[&amp;bundle=ID][&amp;tier=auto|vm|supabase|github]</code></td><td>Upload one file (the request body). Needs <code>Authorization: Bearer TOKEN</code>, plus <code>X-FF-Key</code> when adding to a bundle. Returns the bundle and, for a new bundle, the key.</td></tr>
+    <tr><td><code>DELETE /cdn/BUNDLE[/FILE]</code></td><td>Remove a file or the whole bundle. Needs the upload token.</td></tr>
+    <tr><td><code>GET /cdn/status</code>, <code>GET /cdn/bundles</code></td><td>Space used per store, and your bundles. Need the upload token.</td></tr>
+  </table>
+  <p>Upload from PowerShell:</p>
+<pre><code>Invoke-RestMethod -Method Put -InFile .\setup.exe -Headers @{ Authorization = "Bearer YOUR_TOKEN" } `
+  -Uri "https://129-225-87-247.sslip.io/cdn/upload?name=setup.exe"</code></pre>
+  <p>From macOS or Linux:</p>
+<pre><code>curl -T setup.exe -H "Authorization: Bearer YOUR_TOKEN" "https://129-225-87-247.sslip.io/cdn/upload?name=setup.exe"</code></pre>
+
+  <h2>Set Up the Stores</h2>
+  <p>The CDN works with just your server. Supabase and GitHub are optional: until they are set up, files go to your server.</p>
+  <ol class="steps">
+    <li><strong>Choose an upload token</strong>
+      On the server, add a long random token. Anyone with it can upload, so keep it private.
+<pre><code>echo "FF_CDN_TOKEN=$(openssl rand -hex 24)" | sudo tee -a /etc/fastflare.env</code></pre>
+    </li>
+    <li><strong>Supabase (small files)</strong>
+      Create a free project at supabase.com. In <em>Storage</em>, create a bucket named <code>ffcdn</code> and leave it <strong>private</strong>. In <em>Project Settings → API Keys</em>, copy the project URL and the <strong>secret</strong> (service role) key, then add them:
+<pre><code>echo "FF_SUPABASE_URL=https://YOURPROJECT.supabase.co" | sudo tee -a /etc/fastflare.env
+echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></pre>
+    </li>
+    <li><strong>GitHub (large files)</strong>
+      On GitHub, open <em>Settings → Developer settings → Fine-grained tokens → Generate new token</em>. Give it access to the FastFlare repository only, with <em>Contents: Read and write</em>. Then add it:
+<pre><code>echo "FF_CDN_GITHUB_TOKEN=github_pat_YOUR_TOKEN" | sudo tee -a /etc/fastflare.env</code></pre>
+      Parts are committed to the <code>cdn</code> branch. To use another repository or branch, set <code>FF_CDN_GITHUB_REPO=owner/name</code> and <code>FF_CDN_GITHUB_BRANCH</code>.
+    </li>
+    <li><strong>Restart</strong>
+<pre><code>sudo systemctl restart fastflare</code></pre>
+      Check what is set up with <code>GET /cdn/status</code>, or upload a test file above.
+    </li>
+  </ol>
+
+  <h3>Settings</h3>
+  <table>
+    <tr><th>Setting</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td><code>FF_CDN_SMALL_MB</code></td><td>5</td><td>Files up to this size go to Supabase.</td></tr>
+    <tr><td><code>FF_CDN_GITHUB_MAX_MB</code></td><td>1024</td><td>Files above the small size and up to this go to GitHub; larger ones to your server.</td></tr>
+    <tr><td><code>FF_CDN_SUPABASE_MB</code>, <code>FF_CDN_GITHUB_MB</code>, <code>FF_CDN_VM_MB</code></td><td>950, 4500, 20480</td><td>Space each store may use. When one is full, automatic uploads go to the next.</td></tr>
+    <tr><td><code>FF_CDN_MAX_MB</code></td><td>4096</td><td>Largest single upload.</td></tr>
+    <tr><td><code>FF_CDN_CACHE_MB</code></td><td>2048</td><td>Server-side cache for parts fetched from Supabase and GitHub.</td></tr>
+  </table>
+
+  <h3>Limits Worth Knowing</h3>
+  <ul>
+    <li>Supabase's free plan allows 1 GB of storage, 50 MB per object and 5 GB of downloads a month. The server cache means each popular file is usually read from Supabase once.</li>
+    <li>GitHub asks that repositories stay under 5 GB. Deleting a file removes it from the <code>cdn</code> branch, but it stays in the branch history and still counts. Cloning the repository normally also fetches this branch: use <code>git clone --single-branch</code> for the code only.</li>
+    <li>Every download passes through your server, because that is where files are decrypted. Oracle's free micro server manages roughly 50 Mbps, so large files serve a few people at a time.</li>
+  </ul>
+</main>
+<footer>FastFlare</footer>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+  var defApi = /github\.io$/.test(location.hostname) || location.protocol === 'file:' ? 'https://129-225-87-247.sslip.io' : location.origin;
+  $('u-api').value = store.get('ffcdn-api') || defApi;
+  $('u-token').value = store.get('ffcdn-token') || '';
+  var api = function () { return $('u-api').value.trim().replace(/\/$/, ''); };
+  var size = function (n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB'; };
+  var ERR = {
+    unauthorized: 'The upload token is not right.', cdn_upload_disabled: 'Uploads are off on this server: set FF_CDN_TOKEN.',
+    invalid_key: 'That key does not match this bundle.', bundle_not_found: 'No bundle with that ID.', not_found: 'No bundle with that ID.',
+    too_large: 'This file is larger than the server allows.', tier_not_configured: 'That store is not set up on the server.',
+    tier_full: 'That store is full.', storage_full: 'All stores are full.', name_required: 'File name is not allowed.',
+  };
+  var errText = function (code) { return ERR[code] || ('Failed (' + (code || 'network error') + ').'); };
+
+  // ---- Upload ----
+  var queue = [];
+  function addFiles(list) {
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i];
+      var li = document.createElement('li');
+      li.innerHTML = '<span></span><span class="st"></span><span class="bar"><i></i></span>';
+      li.firstChild.textContent = (f.webkitRelativePath || f.name) + ' · ' + size(f.size);
+      $('queue').appendChild(li);
+      queue.push({ file: f, li: li, done: false });
+    }
+    $('u-go').disabled = !queue.some(function (q) { return !q.done; });
+  }
+  $('drop').onclick = function () { $('pick').click(); };
+  $('drop').onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('pick').click(); } };
+  $('pick').onchange = function () { addFiles(this.files); this.value = ''; };
+  ['dragenter', 'dragover'].forEach(function (t) { $('drop').addEventListener(t, function (e) { e.preventDefault(); $('drop').classList.add('over'); }); });
+  ['dragleave', 'drop'].forEach(function (t) { $('drop').addEventListener(t, function (e) { e.preventDefault(); $('drop').classList.remove('over'); }); });
+  $('drop').addEventListener('drop', function (e) { addFiles(e.dataTransfer.files); });
+
+  function send(item, bundle, key) {
+    return new Promise(function (resolve, reject) {
+      var x = new XMLHttpRequest();
+      var u = api() + '/cdn/upload?name=' + encodeURIComponent(item.file.name) + '&tier=' + $('u-tier').value + (bundle ? '&bundle=' + encodeURIComponent(bundle) : '');
+      x.open('PUT', u);
+      x.setRequestHeader('Authorization', 'Bearer ' + $('u-token').value.trim());
+      if (key) x.setRequestHeader('X-FF-Key', key);
+      var bar = item.li.querySelector('.bar i'), st = item.li.querySelector('.st');
+      x.upload.onprogress = function (e) { if (e.lengthComputable) { bar.style.width = (e.loaded / e.total * 100) + '%'; st.textContent = e.loaded === e.total ? 'Encrypting…' : Math.round(e.loaded / e.total * 100) + '%'; } };
+      x.onload = function () {
+        var j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
+        if (x.status === 201) { st.textContent = 'Stored on ' + ({ vm: 'server', supabase: 'Supabase', github: 'GitHub' })[j.file.tier]; st.className = 'st ok'; resolve(j); }
+        else { st.textContent = errText(j.error); st.className = 'st bad'; reject(new Error(j.error || 'failed')); }
+      };
+      x.onerror = function () { st.textContent = 'Could not reach the server'; st.className = 'st bad'; reject(new Error('network')); };
+      x.send(item.file);
+    });
+  }
+
+  var result = null;
+  $('u-go').onclick = function () {
+    if (!$('u-token').value.trim()) { $('u-msg').textContent = 'Enter the upload token.'; $('u-msg').className = 'msg err'; return; }
+    store.set('ffcdn-api', api()); store.set('ffcdn-token', $('u-token').value.trim());
+    $('u-go').disabled = true; $('u-msg').textContent = ''; $('u-msg').className = 'msg';
+    var bundle = $('u-bundle').value.trim() || (result && result.bundle) || '';
+    var key = $('u-key').value.trim() || (result && result.key) || '';
+    var todo = queue.filter(function (q) { return !q.done; });
+    var chain = Promise.resolve(), fails = 0;
+    todo.forEach(function (item) {
+      chain = chain.then(function () {
+        return send(item, bundle, key).then(function (j) {
+          item.done = true;
+          if (!bundle) { bundle = j.bundle; key = j.key; result = { bundle: bundle, key: key }; showKey(j); }
+        }, function () { fails++; });
+      });
+    });
+    chain.then(function () {
+      $('u-msg').textContent = fails ? fails + ' file(s) failed. Fix the problem and press Upload to retry them.' : 'All files stored.';
+      $('u-msg').className = fails ? 'msg err' : 'msg';
+      $('u-go').disabled = !queue.some(function (q) { return !q.done; });
+      if (bundle && key) { $('d-bundle').value = bundle; $('d-key').value = key; openBundle(); }
+    });
+  };
+  function showKey(j) {
+    $('o-bundle').textContent = j.bundle;
+    $('o-key').textContent = j.key;
+    $('o-all').textContent = api() + '/cdn/' + j.bundle + '?key=' + j.key;
+    $('u-out').classList.remove('hidden');
+  }
+  $('o-save').onclick = function () {
+    var t = 'FastFlare CDN\nServer: ' + api() + '\nBundle: ' + $('o-bundle').textContent + '\nKey: ' + $('o-key').textContent +
+      '\nAll files: ' + $('o-all').textContent + '\n\nKeep this file private. Without the key the files cannot be decrypted.\n';
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([t], { type: 'text/plain' }));
+    a.download = 'fastflare-' + $('o-bundle').textContent + '.key.txt';
+    a.click();
+  };
+  document.querySelectorAll('[data-copy]').forEach(function (b) {
+    b.onclick = function () { navigator.clipboard.writeText($(b.dataset.copy).textContent).then(function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500); }); };
+  });
+
+  // ---- Download ----
+  function openBundle() {
+    var b = $('d-bundle').value.trim(), k = $('d-key').value.trim();
+    $('d-list').innerHTML = ''; $('d-all').classList.add('hidden'); $('d-msg').className = 'msg'; $('d-msg').textContent = 'Opening…';
+    if (!b || !k) { $('d-msg').textContent = 'Enter the bundle ID and key.'; $('d-msg').className = 'msg err'; return; }
+    var base = api() + '/cdn/' + encodeURIComponent(b);
+    fetch(base + '?list=1', { headers: { 'X-FF-Key': k } })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(errText(j.error)); return j; }); })
+      .then(function (j) {
+        $('d-msg').textContent = j.files.length + ' file(s).';
+        j.files.forEach(function (f) {
+          var li = document.createElement('li');
+          var a = document.createElement('a');
+          a.href = base + '/' + f.name.split('/').map(encodeURIComponent).join('/') + '?key=' + encodeURIComponent(k) + '&download=1';
+          a.textContent = f.name;
+          var s = document.createElement('span');
+          s.textContent = size(f.size) + ' · ' + ({ vm: 'server', supabase: 'Supabase', github: 'GitHub' })[f.tier];
+          li.appendChild(a); li.appendChild(s);
+          $('d-list').appendChild(li);
+        });
+        if (j.files.length) { $('d-zip').href = base + '?key=' + encodeURIComponent(k) + (j.files.length === 1 ? '&download=1' : ''); $('d-all').classList.remove('hidden'); }
+      })
+      .catch(function (e) { $('d-msg').textContent = e.message === 'Failed to fetch' ? 'Could not reach ' + api() + '.' : e.message; $('d-msg').className = 'msg err'; });
+  }
+  $('d-go').onclick = openBundle;
+})();
+</script>
+</body>
+</html>

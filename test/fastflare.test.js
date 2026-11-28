@@ -1,4 +1,5 @@
 import test from 'node:test';
+import http from 'node:http';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -399,5 +400,205 @@ test('gate: a passed token sets a pass cookie and redirects; bad or reused token
     } finally {
       await gate.close();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// CDN: mock Supabase Storage and GitHub (Git Data API + raw) so every tier is exercised.
+function mockCloud() {
+  const supa = new Map();
+  const blobs = new Map();
+  const trees = new Map(); // tree sha -> Map(path -> blob sha)
+  const commits = new Map(); // commit sha -> { tree }
+  const sha = () => crypto.randomBytes(20).toString('hex');
+  const t0 = sha();
+  trees.set(t0, new Map());
+  const c0 = sha();
+  commits.set(c0, { tree: t0 });
+  let head = c0;
+  const calls = { supaGet: 0, rawGet: 0 };
+  const server = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const body = Buffer.concat(chunks);
+    const u = new URL(req.url, 'http://x');
+    const p = decodeURIComponent(u.pathname);
+    const json = (s, o) => { res.writeHead(s, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+    if (p.startsWith('/storage/')) {
+      if (req.headers.apikey !== 'supa-key') return json(401, { error: 'auth' });
+      let m;
+      if (req.method === 'POST' && (m = p.match(/^\/storage\/v1\/object\/ffcdn\/(.+)$/))) {
+        if (body.length > 50 * 1000 * 1000) return json(413, { error: 'too big' });
+        supa.set(m[1], body);
+        return json(200, { Key: m[1] });
+      }
+      if (req.method === 'GET' && (m = p.match(/^\/storage\/v1\/object\/authenticated\/ffcdn\/(.+)$/))) {
+        calls.supaGet++;
+        if (!supa.has(m[1])) return json(404, { error: 'not found' });
+        res.writeHead(200);
+        return res.end(supa.get(m[1]));
+      }
+      if (req.method === 'DELETE' && p === '/storage/v1/object/ffcdn') {
+        for (const k of JSON.parse(body).prefixes) supa.delete(k);
+        return json(200, []);
+      }
+    }
+    if (p.startsWith('/repos/me/repo/')) {
+      if (req.headers.authorization !== 'Bearer gh-token') return json(401, {});
+      const r = p.slice('/repos/me/repo'.length);
+      const b = body.length ? JSON.parse(body) : null;
+      if (req.method === 'GET' && r === '/git/ref/heads/cdn') return json(200, { object: { sha: head } });
+      if (req.method === 'GET' && r.startsWith('/git/commits/')) return json(200, { tree: { sha: commits.get(r.split('/').pop()).tree } });
+      if (req.method === 'POST' && r === '/git/blobs') { const s = sha(); blobs.set(s, Buffer.from(b.content, 'base64')); return json(201, { sha: s }); }
+      if (req.method === 'POST' && r === '/git/trees') {
+        const t = new Map(trees.get(b.base_tree));
+        for (const e of b.tree) e.sha === null ? t.delete(e.path) : t.set(e.path, e.sha);
+        const s = sha(); trees.set(s, t); return json(201, { sha: s });
+      }
+      if (req.method === 'POST' && r === '/git/commits') { const s = sha(); commits.set(s, { tree: b.tree }); return json(201, { sha: s }); }
+      if (req.method === 'PATCH' && r === '/git/refs/heads/cdn') { head = b.sha; return json(200, {}); }
+    }
+    let m;
+    if ((m = p.match(/^\/raw\/me\/repo\/([0-9a-f]{40})\/(.+)$/))) {
+      calls.rawGet++;
+      const t = trees.get(commits.get(m[1])?.tree);
+      const s = t && t.get(m[2]);
+      if (!s) { res.writeHead(404); return res.end(); }
+      res.writeHead(200);
+      return res.end(blobs.get(s));
+    }
+    json(404, { error: 'mock: ' + req.method + ' ' + p });
+  });
+  return {
+    server, supa, calls,
+    ghFiles: () => [...trees.get(commits.get(head).tree).keys()],
+    tamperSupabase(prefix) { for (const [k, v] of supa) if (k.startsWith(prefix)) { const c = Buffer.from(v); c[5] ^= 1; supa.set(k, c); } },
+  };
+}
+
+async function withCdn(fn) {
+  const cloud = mockCloud();
+  await new Promise((r) => cloud.server.listen(0, '127.0.0.1', r));
+  const mock = `http://127.0.0.1:${cloud.server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || '/tmp', 'ff-cdn-'));
+  const boot = async () => {
+    const app = await createApp({
+      quiet: true, port: 0, host: '127.0.0.1', ntp: { enabled: false }, dataDir: dir,
+      envtime: { providers: [{ host: 'a' }, { host: 'b' }, { host: 'c' }], pollMs: 60000 },
+      timeQuery: () => Promise.resolve({ offsetMs: 0, rttMs: 5 }),
+      cdn: {
+        token: 'owner-token',
+        supabase: { url: mock, key: 'supa-key', bucket: 'ffcdn' },
+        github: { repo: 'me/repo', branch: 'cdn', token: 'gh-token', api: mock, raw: mock + '/raw' },
+      },
+    });
+    const { port } = await app.start();
+    return { app, base: `http://127.0.0.1:${port}` };
+  };
+  let cur = await boot();
+  try {
+    await fn({ get base() { return cur.base; }, cloud, restart: async () => { await cur.app.stop(); cur = await boot(); } });
+  } finally {
+    await cur.app.stop();
+    cloud.server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function readZip(buf) {
+  const out = {};
+  let o = 0;
+  while (buf.readUInt32LE(o) === 0x04034b50) {
+    const crc = buf.readUInt32LE(o + 14);
+    let size = buf.readUInt32LE(o + 18);
+    const n = buf.readUInt16LE(o + 26);
+    const x = buf.readUInt16LE(o + 28);
+    const name = buf.subarray(o + 30, o + 30 + n).toString('utf8');
+    o += 30 + n + x;
+    out[name] = { data: buf.subarray(o, o + size), crc };
+    o += size;
+  }
+  assert.equal(buf.readUInt32LE(o), 0x02014b50, 'central directory follows the entries');
+  return out;
+}
+
+test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, tamper, delete, restart', { timeout: 120000 }, async () => {
+  await withCdn(async (env) => {
+    const put = (name, data, { bundle, key, tier, token = 'owner-token' } = {}) =>
+      fetch(`${env.base}/cdn/upload?name=${encodeURIComponent(name)}${bundle ? '&bundle=' + bundle : ''}${tier ? '&tier=' + tier : ''}`, {
+        method: 'PUT', headers: { Authorization: 'Bearer ' + token, ...(key ? { 'X-FF-Key': key } : {}) }, body: data,
+      });
+
+    assert.equal((await put('x.txt', 'hi', { token: 'nope' })).status, 401);
+
+    const logo = crypto.randomBytes(30_000);
+    const r1 = await put('logo.png', logo);
+    assert.equal(r1.status, 201);
+    const a = await r1.json();
+    assert.match(a.key, /^ffk_/);
+    assert.equal(a.file.tier, 'supabase', 'small files go to Supabase');
+    const { bundle, key } = a;
+
+    const mid = crypto.randomBytes(6 * 1024 * 1024 + 123);
+    assert.equal((await put('app/setup.bin', mid, { bundle, key: 'ffk_' + 'A'.repeat(43) })).status, 403, 'adding needs the bundle key');
+    const b = await (await put('app/setup.bin', mid, { bundle, key })).json();
+    assert.equal(b.file.tier, 'github', 'medium and large files go to GitHub');
+    assert.equal(b.key, undefined, 'the key is only shown when the bundle is created');
+
+    const big = crypto.randomBytes(50 * 1024 * 1024 + 9);
+    const c = await (await put('main.iso', big, { bundle, key, tier: 'vm' })).json();
+    assert.equal(c.file.tier, 'vm');
+    assert.equal(c.file.parts, 2);
+    assert.ok(env.cloud.ghFiles().every((f) => f.endsWith('.ffencrypted')), 'only encrypted parts on GitHub');
+    for (const v of env.cloud.supa.values()) assert.equal(v.indexOf(logo.subarray(0, 64)), -1, 'Supabase never sees plaintext');
+
+    const get = (p, headers = {}) => fetch(env.base + p, { headers });
+    assert.equal((await get(`/cdn/${bundle}/logo.png`)).status, 403, 'no key, no file');
+    assert.equal((await get(`/cdn/${bundle}/logo.png?key=ffk_${'B'.repeat(43)}`)).status, 403, 'wrong key');
+    assert.equal((await get(`/cdn/AAAAAAAAAAAAAAAA?key=${key}`)).status, 404);
+
+    let res = await get(`/cdn/${bundle}/logo.png?key=${key}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    assert.ok(Buffer.from(await res.arrayBuffer()).equals(logo));
+    res = await get(`/cdn/${bundle}/app/setup.bin`, { 'X-FF-Key': key });
+    assert.ok(Buffer.from(await res.arrayBuffer()).equals(mid), 'key in a header works too');
+    res = await get(`/cdn/${bundle}/main.iso?key=${key}`, { Range: 'bytes=46137300-46137400' });
+    assert.equal(res.status, 206);
+    assert.ok(Buffer.from(await res.arrayBuffer()).equals(big.subarray(46137300, 46137401)), 'range across a part boundary');
+
+    const list = await (await get(`/cdn/${bundle}?key=${key}&list=1`)).json();
+    assert.deepEqual(list.files.map((f) => f.name).sort(), ['app/setup.bin', 'logo.png', 'main.iso']);
+
+    res = await get(`/cdn/${bundle}?key=${key}&files=logo.png,app/setup.bin`);
+    assert.equal(res.headers.get('content-type'), 'application/zip');
+    const zbuf = Buffer.from(await res.arrayBuffer());
+    assert.equal(Number(res.headers.get('content-length')), zbuf.length);
+    const z = readZip(zbuf);
+    assert.ok(z['logo.png'].data.equals(logo) && z['app/setup.bin'].data.equals(mid));
+    const all = readZip(Buffer.from(await (await get(`/cdn/${bundle}?key=${key}`)).arrayBuffer()));
+    assert.ok(all['main.iso'].data.equals(big), 'no selection = every file');
+
+    const gets = env.cloud.calls.supaGet;
+    await (await get(`/cdn/${bundle}/logo.png?key=${key}`)).arrayBuffer();
+    assert.equal(env.cloud.calls.supaGet, gets, 'repeat downloads come from the VM cache');
+
+    const d = await (await put('fresh.txt', 'tamper me')).json();
+    env.cloud.tamperSupabase(d.bundle + '/');
+    assert.equal((await get(`/cdn/${d.bundle}/fresh.txt?key=${d.key}`)).status, 502, 'altered storage is detected');
+
+    await env.restart();
+    res = await get(`/cdn/${bundle}/app/setup.bin?key=${key}`);
+    assert.ok(Buffer.from(await res.arrayBuffer()).equals(mid), 'survives a restart');
+    const st = await (await get('/cdn/status', { Authorization: 'Bearer owner-token' })).json();
+    assert.ok(st.tiers.github.usedBytes > mid.length && st.tiers.vm.usedBytes > big.length);
+
+    const del = await fetch(`${env.base}/cdn/${bundle}/app/setup.bin`, { method: 'DELETE', headers: { Authorization: 'Bearer owner-token' } });
+    assert.equal(del.status, 200);
+    assert.equal(env.cloud.ghFiles().length, 0, 'GitHub parts removed from the branch');
+    assert.equal((await get(`/cdn/${bundle}/app/setup.bin?key=${key}`)).status, 404);
+    await fetch(`${env.base}/cdn/${bundle}`, { method: 'DELETE', headers: { Authorization: 'Bearer owner-token' } });
+    assert.equal((await get(`/cdn/${bundle}?key=${key}&list=1`)).status, 404);
+    assert.ok(![...env.cloud.supa.keys()].some((k) => k.startsWith(bundle)), 'Supabase parts removed');
   });
 });

@@ -1,6 +1,6 @@
 # FastFlare
 
-Image-free bot protection and a precise time server in one zero-dependency Node.js service.
+Image-free bot protection, an encrypted CDN and a precise time server in one zero-dependency Node.js service.
 
 ## Protect a Site
 
@@ -12,6 +12,10 @@ node docs/kit/fastflare-gate.mjs --sitekey=YOUR_SITE_KEY --secret=YOUR_SECRET --
 ```
 
 Visitors click "I'm not a robot", the FastFlare server decides to let them through, challenge them or block them, and the gate sends those who pass to the redirect page. Add `--upstream=http://localhost:8080` to put the gate in front of an existing site.
+
+## Encrypted CDN
+
+Upload through the server; each file is encrypted with AES-256-GCM, split into `.ffencrypted` parts and stored on Supabase (small files), the `cdn` branch on GitHub (large files) or the server itself. Downloads need the key returned at upload. Upload page and setup: [CDN](https://arthwarrior3201.github.io/FastFlare/cdn.html).
 
 ## Run a FastFlare Server
 
@@ -29,6 +33,7 @@ Time API: `GET /time?tz=Asia/Kolkata`. NTP on UDP 123 works as a Windows time se
 | --- | --- |
 | `src/captcha.js`, `src/puzzle.js` | Challenges, scoring, puzzles, tokens, siteverify |
 | `src/sites.js` | Self-serve site keys |
+| `src/cdn/` | CDN: encryption format, storage tiers, upload and download |
 | `src/ntp.js`, `src/envtime.js` | NTP client and server, consensus clock |
 | `docs/` | Documentation site and the widget `fastflare.js` |
 | `docs/kit/fastflare-gate.mjs` | Gate backend for developers |
