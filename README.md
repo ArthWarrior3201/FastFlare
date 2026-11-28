@@ -15,7 +15,7 @@ Visitors click "I'm not a robot", the FastFlare server decides to let them throu
 
 ## Encrypted CDN
 
-Upload through the server; each file is encrypted with AES-256-GCM, split into `.ffencrypted` parts and stored on Supabase (small files), the `cdn` branch on GitHub (large files) or the server itself. Downloads run on a Vercel edge function (`vercel/`) that decrypts close to the visitor, and need the key returned at upload. Upload page and setup: [CDN](https://arthwarrior3201.github.io/FastFlare/cdn.html).
+Upload through the server; each file is encrypted with AES-256-GCM, split into `.ffencrypted` parts and stored on the `cdn` branch on GitHub (large files) or the server itself. Downloads run on a Vercel edge function (`vercel/`) that decrypts close to the visitor, and need the key returned at upload. Upload page and setup: [CDN](https://arthwarrior3201.github.io/FastFlare/cdn.html).
 
 ## Run a FastFlare Server
 

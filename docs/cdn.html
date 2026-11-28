@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CDN · FastFlare</title>
-<meta name="description" content="Encrypted file delivery across your VM, Supabase and GitHub. Every file is locked with its own key.">
+<meta name="description" content="Encrypted file delivery across your server and GitHub. Every file is locked with its own key.">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="stylesheet" href="assets/style.css">
 <style>
@@ -41,21 +41,20 @@
   </nav>
 </header>
 <main>
-  <h1>Encrypted File Delivery <em>Across Three Stores</em></h1>
-  <p class="lead">Upload once. FastFlare encrypts every file, splits it into parts, and spreads them across your server, Supabase and GitHub. Downloads run on Vercel's edge network, close to every visitor, and need the key you were given at upload.</p>
+  <h1>Encrypted File Delivery <em>at the Edge</em></h1>
+  <p class="lead">Upload once. FastFlare encrypts every file, splits it into parts, and stores them on your server or GitHub. Downloads run on Vercel's edge network, close to every visitor, and need the key you were given at upload.</p>
 
   <h2>How It Works</h2>
   <div class="tiers">
-    <div><b>Supabase</b><span>Small files up to 5 MB: logos, icons, images, stylesheets. Fast, and cached on the server so popular files are fetched once.</span></div>
     <div><b>GitHub</b><span>Files from 5 MB to 1 GB, stored on the <code>cdn</code> branch as encrypted parts of about 44 MB each.</span></div>
-    <div><b>Your Server</b><span>Main files: anything over 1 GB, anything you send there on purpose, and everything else when the other stores are full or not set up.</span></div>
+    <div><b>Your Server</b><span>Small files up to 5 MB (served from Vercel's edge cache), main files over 1 GB, anything you send there on purpose, and everything when GitHub is full or not set up.</span></div>
   </div>
   <ol>
     <li>You upload through your FastFlare server. It encrypts each file with <strong>AES-256-GCM</strong> using a new random 256-bit key, in 1 MB segments that each carry their own tamper check.</li>
-    <li>The encrypted parts (<code>.ffencrypted</code>) go to the store that suits the file's size. Supabase and GitHub only ever hold encrypted data with meaningless names.</li>
+    <li>The encrypted parts (<code>.ffencrypted</code>) go to the store that suits the file's size. GitHub only ever holds encrypted data with meaningless names.</li>
     <li>When every file is in, you get the bundle ID and the key, <strong>once</strong>. No key is needed to upload, and anyone can upload after the "I'm not a robot" check. The server keeps only a fingerprint of the key, so it can check requests but cannot decrypt anything on its own.</li>
-    <li>A download goes to the Vercel edge node nearest the visitor. The edge asks your server whether the key is right; if it is, the server hands back short-lived links to the encrypted parts. The edge fetches them straight from Supabase and GitHub, decrypts and checks every segment, and streams the file. A wrong key gets nothing, and an altered part stops the download.</li>
-    <li>Your server only checks keys and hands out links, so its own connection is no longer the limit for files stored on Supabase and GitHub.</li>
+    <li>A download goes to the Vercel edge node nearest the visitor. The edge asks your server whether the key is right; if it is, the server hands back short-lived links to the encrypted parts. The edge fetches them straight from GitHub (or from your server), decrypts and checks every segment, and streams the file. A wrong key gets nothing, and an altered part stops the download.</li>
+    <li>Your server only checks keys and hands out links, so its own connection is no longer the limit for files stored on GitHub.</li>
   </ol>
   <div class="note"><strong>About the key.</strong> AES-256 is the standard for encrypting files, and it is far stronger than a 2048-bit RSA key. Lose the key and the files cannot be recovered by anyone, including you. Save it in a password manager or on your own server.</div>
 
@@ -76,7 +75,7 @@
       <div><label for="u-api">FastFlare server</label><input id="u-api"></div>
       <div><label for="u-token">Owner token (optional)</label><input id="u-token" type="password" autocomplete="off" placeholder="Leave empty to upload as a visitor"></div>
       <div><label for="u-tier">Store</label>
-        <select id="u-tier"><option value="auto">Automatic (by size)</option><option value="vm">My server</option><option value="supabase">Supabase</option><option value="github">GitHub</option></select></div>
+        <select id="u-tier"><option value="auto">Automatic (by size)</option><option value="vm">My server</option><option value="github">GitHub</option></select></div>
     </div>
     <details id="u-addto"><summary>Add to an existing bundle</summary>
       <div class="row" style="margin-top:10px">
@@ -123,7 +122,7 @@
     <tr><td><code>GET /cdn/BUNDLE?key=KEY&amp;files=logo.png,app.css</code></td><td>Only those files.</td></tr>
     <tr><td><code>GET /cdn/BUNDLE/logo.png?key=KEY</code></td><td>One file. Images, audio, video and PDFs open in the browser, so this works in <code>&lt;img src&gt;</code>. Supports <code>Range</code> for resuming and seeking. Add <code>&amp;download=1</code> to force a download.</td></tr>
     <tr><td><code>GET /cdn/BUNDLE?key=KEY&amp;list=1</code></td><td>File names, sizes and stores as JSON.</td></tr>
-    <tr><td><code>PUT /cdn/upload?name=FILE</code></td><td>Upload one file (the request body). The first file needs a FastFlare human-check token (<code>X-FF-Captcha</code>) or the owner token (<code>Authorization: Bearer TOKEN</code>). It returns the bundle and an upload ticket; send the ticket as <code>X-FF-Ticket</code> with the other files of the batch. Add <code>&amp;done=1</code> to the last file to get the key straight away. The owner can also add <code>&amp;tier=vm|supabase|github</code>.</td></tr>
+    <tr><td><code>PUT /cdn/upload?name=FILE</code></td><td>Upload one file (the request body). The first file needs a FastFlare human-check token (<code>X-FF-Captcha</code>) or the owner token (<code>Authorization: Bearer TOKEN</code>). It returns the bundle and an upload ticket; send the ticket as <code>X-FF-Ticket</code> with the other files of the batch. Add <code>&amp;done=1</code> to the last file to get the key straight away. The owner can also add <code>&amp;tier=vm|github</code>.</td></tr>
     <tr><td><code>POST /cdn/finish</code> with <code>X-FF-Ticket</code></td><td>Ends the batch and returns the decryption key and the download link.</td></tr>
     <tr><td><code>PUT /cdn/upload?name=FILE&amp;bundle=ID</code> with <code>X-FF-Key</code></td><td>Add a file to a bundle you already have the key for.</td></tr>
     <tr><td><code>DELETE /cdn/BUNDLE[/FILE]</code></td><td>Remove a file or the whole bundle. Needs the upload token.</td></tr>
@@ -136,16 +135,11 @@
 <pre><code>curl -T setup.exe -H "Authorization: Bearer YOUR_TOKEN" "https://129-225-87-247.sslip.io/cdn/upload?name=setup.exe&amp;done=1"</code></pre>
 
   <h2>Set Up the Stores</h2>
-  <p>The CDN works with just your server. Supabase and GitHub are optional: until they are set up, files go to your server.</p>
+  <p>The CDN works with just your server. GitHub is optional: until it is set up, files go to your server.</p>
   <ol class="steps">
     <li><strong>Choose an owner token (for you only)</strong>
       Visitors upload with the human check and per-network limits. Your owner token skips both and lets you choose the store and delete files. Keep it private.
 <pre><code>echo "FF_CDN_TOKEN=$(openssl rand -hex 24)" | sudo tee -a /etc/fastflare.env</code></pre>
-    </li>
-    <li><strong>Supabase (small files)</strong>
-      Create a free project at supabase.com. In <em>Storage</em>, create a bucket named <code>ffcdn</code> and leave it <strong>private</strong>. In <em>Project Settings → API Keys</em>, copy the project URL and the <strong>secret</strong> (service role) key, then add them:
-<pre><code>echo "FF_SUPABASE_URL=https://YOURPROJECT.supabase.co" | sudo tee -a /etc/fastflare.env
-echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></pre>
     </li>
     <li><strong>GitHub (large files)</strong>
       On GitHub, open <em>Settings → Developer settings → Fine-grained tokens → Generate new token</em>. Give it access to the FastFlare repository only, with <em>Contents: Read and write</em>. Then add it:
@@ -165,21 +159,20 @@ echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></
   <h3>Settings</h3>
   <table>
     <tr><th>Setting</th><th>Default</th><th>Meaning</th></tr>
-    <tr><td><code>FF_CDN_SMALL_MB</code></td><td>5</td><td>Files up to this size go to Supabase.</td></tr>
+    <tr><td><code>FF_CDN_SMALL_MB</code></td><td>5</td><td>Files up to this size stay on your server; Vercel caches them at the edge.</td></tr>
     <tr><td><code>FF_CDN_GITHUB_MAX_MB</code></td><td>1024</td><td>Files above the small size and up to this go to GitHub; larger ones to your server.</td></tr>
-    <tr><td><code>FF_CDN_SUPABASE_MB</code>, <code>FF_CDN_GITHUB_MB</code>, <code>FF_CDN_VM_MB</code></td><td>950, 4500, 20480</td><td>Space each store may use. When one is full, automatic uploads go to the next.</td></tr>
+    <tr><td><code>FF_CDN_GITHUB_MB</code>, <code>FF_CDN_VM_MB</code></td><td>4500, 20480</td><td>Space each store may use. When one is full, automatic uploads go to the next.</td></tr>
     <tr><td><code>FF_CDN_MAX_MB</code></td><td>4096</td><td>Largest single upload by the owner.</td></tr>
     <tr><td><code>FF_CDN_PUBLIC_UPLOAD</code></td><td>1</td><td>Set to <code>0</code> to allow only the owner to upload.</td></tr>
     <tr><td><code>FF_CDN_PUBLIC_FILE_MB</code>, <code>FF_CDN_PUBLIC_DAY_MB</code>, <code>FF_CDN_PUBLIC_DAY_FILES</code></td><td>1024, 2048, 50</td><td>Visitor limits: largest file, and total size and number of files per network per day.</td></tr>
-    <tr><td><code>FF_CDN_CACHE_MB</code></td><td>2048</td><td>Server-side cache for parts fetched from Supabase and GitHub.</td></tr>
+    <tr><td><code>FF_CDN_CACHE_MB</code></td><td>2048</td><td>Server-side cache for parts fetched from GitHub.</td></tr>
   </table>
 
   <h3>Limits Worth Knowing</h3>
   <ul>
-    <li>Supabase's free plan allows 1 GB of storage, 50 MB per object and 5 GB of downloads a month. The server cache means each popular file is usually read from Supabase once.</li>
     <li>GitHub asks that repositories stay under 5 GB. Deleting a file removes it from the <code>cdn</code> branch, but it stays in the branch history and still counts. Cloning the repository normally also fetches this branch: use <code>git clone --single-branch</code> for the code only.</li>
     <li>Vercel's free plan includes 100 GB of downloads a month, and an edge response can stream for up to 300 seconds, which is why large files go in chunks. Files stored on your server still travel from it to the edge, so for the fastest chunked downloads keep large files on GitHub.</li>
-    <li>Small single files opened by a <code>?key=</code> link are cached on Vercel's network for a day, so repeat downloads do not touch Supabase or your server at all.</li>
+    <li>Small single files opened by a <code>?key=</code> link are cached on Vercel's network for a day, so repeat downloads do not touch your server at all.</li>
   </ul>
 </main>
 <footer>FastFlare</footer>
@@ -255,7 +248,7 @@ echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></
       x.upload.onprogress = function (e) { if (e.lengthComputable) { bar.style.width = (e.loaded / e.total * 100) + '%'; st.textContent = e.loaded === e.total ? 'Encrypting…' : Math.round(e.loaded / e.total * 100) + '%'; } };
       x.onload = function () {
         var j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
-        if (x.status === 201) { bar.style.width = '100%'; st.textContent = 'Encrypted and stored on ' + ({ vm: 'server', supabase: 'Supabase', github: 'GitHub' })[j.file.tier]; st.className = 'st ok'; resolve(j); }
+        if (x.status === 201) { bar.style.width = '100%'; st.textContent = 'Encrypted and stored on ' + ({ vm: 'server', github: 'GitHub' })[j.file.tier]; st.className = 'st ok'; resolve(j); }
         else { st.textContent = errText(j.error); st.className = 'st bad'; reject(new Error(j.error || 'failed')); }
       };
       x.onerror = function () { st.textContent = 'Could not reach the server'; st.className = 'st bad'; reject(new Error('network')); };
@@ -336,7 +329,7 @@ echo "FF_SUPABASE_KEY=YOUR_SECRET_KEY" | sudo tee -a /etc/fastflare.env</code></
           a.href = base + '/' + f.name.split('/').map(encodeURIComponent).join('/') + '?key=' + encodeURIComponent(k) + '&download=1';
           a.textContent = f.name;
           var s = document.createElement('span');
-          s.textContent = size(f.size) + ' · ' + ({ vm: 'server', supabase: 'Supabase', github: 'GitHub' })[f.tier];
+          s.textContent = size(f.size) + ' · ' + ({ vm: 'server', github: 'GitHub' })[f.tier];
           li.appendChild(a); li.appendChild(s);
           $('d-list').appendChild(li);
         });

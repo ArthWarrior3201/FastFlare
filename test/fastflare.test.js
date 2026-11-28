@@ -404,9 +404,8 @@ test('gate: a passed token sets a pass cookie and redirects; bad or reused token
 });
 
 // ---------------------------------------------------------------------------------------------
-// CDN: mock Supabase Storage and GitHub (Git Data API + raw) so every tier is exercised.
+// CDN: mock GitHub (Git Data API + raw) so the GitHub tier is exercised.
 function mockCloud() {
-  const supa = new Map();
   const blobs = new Map();
   const trees = new Map(); // tree sha -> Map(path -> blob sha)
   const commits = new Map(); // commit sha -> { tree }
@@ -416,7 +415,7 @@ function mockCloud() {
   const c0 = sha();
   commits.set(c0, { tree: t0 });
   let head = c0;
-  const calls = { supaGet: 0, rawGet: 0 };
+  const calls = { rawGet: 0 };
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
@@ -424,36 +423,6 @@ function mockCloud() {
     const u = new URL(req.url, 'http://x');
     const p = decodeURIComponent(u.pathname);
     const json = (s, o) => { res.writeHead(s, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
-    if (req.method === 'GET' && p.startsWith('/storage/v1/object/sign/ffcdn/')) {
-      calls.signedGet = (calls.signedGet || 0) + 1;
-      const k = p.slice('/storage/v1/object/sign/ffcdn/'.length);
-      if (u.searchParams.get('token') !== 'ok' || !supa.has(k)) { res.writeHead(400); return res.end(); }
-      res.writeHead(200);
-      return res.end(supa.get(k)); // ignores Range on purpose: the edge must cope
-    }
-    if (p.startsWith('/storage/')) {
-      if (req.headers.apikey !== 'supa-key') return json(401, { error: 'auth' });
-      let m;
-      if (req.method === 'POST' && (m = p.match(/^\/storage\/v1\/object\/ffcdn\/(.+)$/))) {
-        if (body.length > 50 * 1000 * 1000) return json(413, { error: 'too big' });
-        supa.set(m[1], body);
-        return json(200, { Key: m[1] });
-      }
-      if (req.method === 'GET' && (m = p.match(/^\/storage\/v1\/object\/authenticated\/ffcdn\/(.+)$/))) {
-        calls.supaGet++;
-        if (!supa.has(m[1])) return json(404, { error: 'not found' });
-        res.writeHead(200);
-        return res.end(supa.get(m[1]));
-      }
-      if (req.method === 'POST' && p === '/storage/v1/object/sign/ffcdn') {
-        const b = JSON.parse(body);
-        return json(200, b.paths.map((x) => ({ path: x, error: null, signedURL: `/object/sign/ffcdn/${x}?token=ok` })));
-      }
-      if (req.method === 'DELETE' && p === '/storage/v1/object/ffcdn') {
-        for (const k of JSON.parse(body).prefixes) supa.delete(k);
-        return json(200, []);
-      }
-    }
     if (p.startsWith('/repos/me/repo/')) {
       if (req.headers.authorization !== 'Bearer gh-token') return json(401, {});
       const r = p.slice('/repos/me/repo'.length);
@@ -481,9 +450,11 @@ function mockCloud() {
     json(404, { error: 'mock: ' + req.method + ' ' + p });
   });
   return {
-    server, supa, calls,
+    server, blobs, calls,
     ghFiles: () => [...trees.get(commits.get(head).tree).keys()],
-    tamperSupabase(prefix) { for (const [k, v] of supa) if (k.startsWith(prefix)) { const c = Buffer.from(v); c[5] ^= 1; supa.set(k, c); } },
+    tamperGithub(prefix) {
+      for (const [p, s] of trees.get(commits.get(head).tree)) if (p.startsWith(prefix)) { const c = Buffer.from(blobs.get(s)); c[5] ^= 1; blobs.set(s, c); }
+    },
   };
 }
 
@@ -499,7 +470,6 @@ async function withCdn(fn, extra = {}) {
       timeQuery: () => Promise.resolve({ offsetMs: 0, rttMs: 5 }),
       cdn: {
         token: 'owner-token',
-        supabase: { url: mock, key: 'supa-key', bucket: 'ffcdn' },
         github: { repo: 'me/repo', branch: 'cdn', token: 'gh-token', api: mock, raw: mock + '/raw' },
         ...extra,
       },
@@ -534,7 +504,7 @@ function readZip(buf) {
   return out;
 }
 
-test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, tamper, delete, restart', { timeout: 120000 }, async () => {
+test('CDN: upload to the server and GitHub, download with the key, ranges, zip, wrong key, tamper, delete, restart', { timeout: 120000 }, async () => {
   await withCdn(async (env) => {
     const put = (name, data, { bundle, key, tier, token = 'owner-token' } = {}) =>
       fetch(`${env.base}/cdn/upload?name=${encodeURIComponent(name)}${bundle ? '&bundle=' + bundle : ''}${tier ? '&tier=' + tier : ''}`, {
@@ -551,7 +521,7 @@ test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, 
     const fin = await (await fetch(`${env.base}/cdn/finish`, { method: 'POST', headers: { 'X-FF-Ticket': a.ticket } })).json();
     a.key = fin.key;
     assert.match(a.key, /^ffk_/);
-    assert.equal(a.file.tier, 'supabase', 'small files go to Supabase');
+    assert.equal(a.file.tier, 'vm', 'small files stay on the server');
     const { bundle, key } = a;
 
     const mid = crypto.randomBytes(6 * 1024 * 1024 + 123);
@@ -565,7 +535,7 @@ test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, 
     assert.equal(c.file.tier, 'vm');
     assert.equal(c.file.parts, 2);
     assert.ok(env.cloud.ghFiles().every((f) => f.endsWith('.ffencrypted')), 'only encrypted parts on GitHub');
-    for (const v of env.cloud.supa.values()) assert.equal(v.indexOf(logo.subarray(0, 64)), -1, 'Supabase never sees plaintext');
+    for (const v of env.cloud.blobs.values()) assert.equal(v.indexOf(mid.subarray(0, 64)), -1, 'GitHub never sees plaintext');
 
     const get = (p, headers = {}) => fetch(env.base + p, { headers });
     assert.equal((await get(`/cdn/${bundle}/logo.png`)).status, 403, 'no key, no file');
@@ -594,12 +564,12 @@ test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, 
     const all = readZip(Buffer.from(await (await get(`/cdn/${bundle}?key=${key}`)).arrayBuffer()));
     assert.ok(all['main.iso'].data.equals(big), 'no selection = every file');
 
-    const gets = env.cloud.calls.supaGet;
-    await (await get(`/cdn/${bundle}/logo.png?key=${key}`)).arrayBuffer();
-    assert.equal(env.cloud.calls.supaGet, gets, 'repeat downloads come from the VM cache');
+    const gets = env.cloud.calls.rawGet;
+    await (await get(`/cdn/${bundle}/app/setup.bin?key=${key}`)).arrayBuffer();
+    assert.equal(env.cloud.calls.rawGet, gets, 'repeat downloads come from the VM cache');
 
-    const d = await (await fetch(`${env.base}/cdn/upload?name=fresh.txt&done=1`, { method: 'PUT', headers: { Authorization: 'Bearer owner-token' }, body: 'tamper me' })).json();
-    env.cloud.tamperSupabase(d.bundle + '/');
+    const d = await (await fetch(`${env.base}/cdn/upload?name=fresh.txt&done=1&tier=github`, { method: 'PUT', headers: { Authorization: 'Bearer owner-token' }, body: 'tamper me' })).json();
+    env.cloud.tamperGithub(d.bundle + '/');
     assert.equal((await get(`/cdn/${d.bundle}/fresh.txt?key=${d.key}`)).status, 502, 'altered storage is detected');
 
     await env.restart();
@@ -610,15 +580,15 @@ test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, 
 
     const del = await fetch(`${env.base}/cdn/${bundle}/app/setup.bin`, { method: 'DELETE', headers: { Authorization: 'Bearer owner-token' } });
     assert.equal(del.status, 200);
-    assert.equal(env.cloud.ghFiles().length, 0, 'GitHub parts removed from the branch');
+    assert.equal(env.cloud.ghFiles().filter((f) => f.startsWith(bundle)).length, 0, 'GitHub parts removed from the branch');
     assert.equal((await get(`/cdn/${bundle}/app/setup.bin?key=${key}`)).status, 404);
     await fetch(`${env.base}/cdn/${bundle}`, { method: 'DELETE', headers: { Authorization: 'Bearer owner-token' } });
     assert.equal((await get(`/cdn/${bundle}?key=${key}&list=1`)).status, 404);
-    assert.ok(![...env.cloud.supa.keys()].some((k) => k.startsWith(bundle)), 'Supabase parts removed');
+    assert.ok(!env.cloud.ghFiles().some((k) => k.startsWith(bundle)), 'GitHub parts removed');
   });
 });
 
-test('CDN edge function: decrypts at the edge from direct links, ranges, zip, wrong key, large-file handoff', { timeout: 120000 }, async () => {
+test('CDN edge function: decrypts at the edge from direct GitHub links, ranges, zip, wrong key, large-file handoff', { timeout: 120000 }, async () => {
   const { default: edge } = await import('../vercel/api/cdn.js');
   await withCdn(async (env) => {
     process.env.FF_ORIGIN = env.base;
@@ -632,14 +602,11 @@ test('CDN edge function: decrypts at the edge from direct links, ranges, zip, wr
     await put('main.iso', big, `&bundle=${a.bundle}&tier=vm`, { 'X-FF-Key': a.key });
     const call = (p, headers = {}) => edge(new Request('https://edge.example' + p, { headers }));
 
-    const vmGets = env.cloud.calls.supaGet;
     let r = await call(`/cdn/${a.bundle}/logo.png?key=${a.key}`);
     assert.equal(r.status, 200);
     assert.equal(r.headers.get('x-fastflare-edge'), '1');
     assert.match(r.headers.get('cache-control'), /s-maxage/, 'small files are cached at the edge');
     assert.ok(Buffer.from(await r.arrayBuffer()).equals(logo));
-    assert.ok(env.cloud.calls.signedGet >= 1, 'the edge read Supabase directly');
-    assert.equal(env.cloud.calls.supaGet, vmGets, 'the server did not fetch the part');
 
     const raws = env.cloud.calls.rawGet;
     r = await call(`/cdn/${a.bundle}/dl/setup.bin`, { 'X-FF-Key': a.key, Range: 'bytes=1048570-1048590' });
@@ -664,8 +631,8 @@ test('CDN edge function: decrypts at the edge from direct links, ranges, zip, wr
     assert.equal(r.status, 307, 'normal-size files are sent to the server');
     assert.equal(r.headers.get('location'), `${env.base}/cdn/${a.bundle}/main.iso?key=${a.key}&route=native`);
 
-    const t = await put('t.txt', 'tamper', '&done=1');
-    env.cloud.tamperSupabase(t.bundle + '/');
+    const t = await put('t.txt', 'tamper', '&done=1&tier=github');
+    env.cloud.tamperGithub(t.bundle + '/');
     assert.equal((await call(`/cdn/${t.bundle}/t.txt?key=${t.key}`)).status, 502, 'altered parts are refused at the edge');
     assert.equal((await fetch(`${env.base}/cdn/part/${a.bundle}/x/0?exp=${Date.now() + 1e5}&sig=bad`)).status, 403, 'part links must be signed');
     delete process.env.FF_ORIGIN;

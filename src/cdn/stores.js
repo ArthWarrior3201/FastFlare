@@ -45,68 +45,6 @@ export function localStore(dir) {
   };
 }
 
-// ---- Supabase Storage (free plan: 1 GB, 50 MB per object) -------------------------------------------
-export function supabaseStore({ url, key, bucket = 'ffcdn', fetchImpl = fetch }) {
-  const base = String(url || '').replace(/\/$/, '');
-  const ready = !!(base && key);
-  const headers = { Authorization: `Bearer ${key}`, apikey: key, 'User-Agent': UA };
-  const objUrl = (p) => `${base}/storage/v1/object/${encodeURIComponent(bucket)}/${p.split('/').map(encodeURIComponent).join('/')}`;
-  return {
-    name: 'supabase',
-    ready,
-    async putFiles(items) {
-      for (const it of items) {
-        const body = await fsp.readFile(it.file);
-        await check(
-          await fetchImpl(objUrl(it.path), {
-            method: 'POST',
-            headers: { ...headers, 'Content-Type': 'application/octet-stream', 'x-upsert': 'true', 'Cache-Control': 'max-age=31536000' },
-            body,
-          }),
-          'Supabase upload',
-        );
-        await fsp.unlink(it.file).catch(() => {});
-      }
-      return {};
-    },
-    // Time-limited links the edge function can read directly.
-    async signUrls(paths, seconds) {
-      const res = await check(
-        await fetchImpl(`${base}/storage/v1/object/sign/${encodeURIComponent(bucket)}`, {
-          method: 'POST',
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ expiresIn: Math.floor(seconds), paths }),
-        }),
-        'Supabase sign',
-      );
-      const list = await res.json();
-      return paths.map((p) => {
-        const hit = list.find((x) => x.path === p);
-        if (!hit || hit.error || !hit.signedURL) throw new Error('Supabase sign: no link for ' + p);
-        return `${base}/storage/v1${hit.signedURL.startsWith('/') ? '' : '/'}${hit.signedURL}`;
-      });
-    },
-    async download(p, _ref, dest) {
-      const res = await check(
-        await fetchImpl(`${base}/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${p.split('/').map(encodeURIComponent).join('/')}`, { headers }),
-        'Supabase download',
-      );
-      await fsp.writeFile(dest, Buffer.from(await res.arrayBuffer()));
-    },
-    async remove(paths) {
-      if (!paths.length) return;
-      await check(
-        await fetchImpl(`${base}/storage/v1/object/${encodeURIComponent(bucket)}`, {
-          method: 'DELETE',
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prefixes: paths }),
-        }),
-        'Supabase delete',
-      );
-    },
-  };
-}
-
 // ---- GitHub: a branch of a repository, written through the Git Data API ----------------------------
 // Each upload becomes one commit on top of the branch; nothing is cloned to the VM. Parts are read
 // back from raw.githubusercontent.com by commit, so a later commit can never change them.
@@ -176,9 +114,8 @@ export function githubStore({ repo, branch = 'cdn', token, api = 'https://api.gi
   };
 }
 
-// ---- Cache on the VM for parts fetched from Supabase or GitHub -------------------------------------
-// Popular small files are then read from Supabase or GitHub once instead of on every download, which
-// keeps Supabase's monthly egress allowance for new files.
+// ---- Cache on the VM for parts fetched from GitHub --------------------------------------------------
+// Parts the server itself needs (for direct downloads) are fetched from GitHub once, then kept here.
 export function partCache(dir, maxBytes) {
   const inflight = new Map();
   let used = null;

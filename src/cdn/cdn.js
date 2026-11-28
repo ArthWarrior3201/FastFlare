@@ -1,6 +1,6 @@
-// FastFlare CDN: encrypted file bundles spread over the VM, Supabase and a GitHub branch.
+// FastFlare CDN: encrypted file bundles spread over the VM and a GitHub branch.
 //
-//   PUT    /cdn/upload?name=logo.png[&bundle=ID][&tier=auto|vm|supabase|github]
+//   PUT    /cdn/upload?name=logo.png[&bundle=ID][&tier=auto|vm|github]
 //          Authorization: Bearer FF_CDN_TOKEN   (+ X-FF-Key when adding to an existing bundle)
 //   GET    /cdn/ID?key=KEY                      every file (one file as itself, several as a .zip)
 //   GET    /cdn/ID?key=KEY&files=a.png,b.css    just those files
@@ -17,7 +17,7 @@ import crypto from 'node:crypto';
 import { Readable, pipeline } from 'node:stream';
 import { httpError, send, CORS, clientIp, coarseIp } from '../util.js';
 import * as F from './format.js';
-import { localStore, supabaseStore, githubStore, partCache } from './stores.js';
+import { localStore, githubStore, partCache } from './stores.js';
 import { pickRoute, rangeSpan, chunkedPageUrl } from './route.js';
 
 const MB = 1024 * 1024;
@@ -54,19 +54,18 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch, verifyHum
 
   const stores = {
     vm: localStore(dirs.store),
-    supabase: supabaseStore({ ...c.supabase, fetchImpl }),
     github: githubStore({ ...c.github, fetchImpl }),
   };
-  const caps = { vm: c.vmCapBytes, supabase: c.supabaseCapBytes, github: c.githubCapBytes };
+  const caps = { vm: c.vmCapBytes, github: c.githubCapBytes };
   const cache = partCache(dirs.cache, c.cacheBytes);
 
   // ---- Manifests (on the VM only; they hold names and sizes, never keys) -------------------------
-  const used = { vm: 0, supabase: 0, github: 0 };
+  const used = { vm: 0, github: 0 };
   const manifestPath = (id) => path.join(dirs.bundles, id + '.json');
   for (const f of fs.readdirSync(dirs.bundles)) {
     if (!f.endsWith('.json')) continue;
     try {
-      for (const file of JSON.parse(fs.readFileSync(path.join(dirs.bundles, f), 'utf8')).files) used[file.tier] += F.encryptedSize(file.size);
+      for (const file of JSON.parse(fs.readFileSync(path.join(dirs.bundles, f), 'utf8')).files) used[file.tier] = (used[file.tier] || 0) + F.encryptedSize(file.size);
     } catch (e) {
       log(`cdn: unreadable manifest ${f}: ${e.message}`);
     }
@@ -151,11 +150,9 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch, verifyHum
       if (!fits(asked)) throw httpError(507, 'tier_full');
       return asked;
     }
-    if (size <= c.smallMaxBytes && fits('supabase')) return 'supabase';
     if (size > c.smallMaxBytes && size <= c.githubMaxBytes && fits('github')) return 'github';
     if (fits('vm')) return 'vm';
     if (fits('github')) return 'github';
-    if (fits('supabase')) return 'supabase';
     throw httpError(507, 'storage_full');
   }
 
@@ -317,7 +314,7 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch, verifyHum
 
   async function removeFile(bundleId, file) {
     const paths = Array.from({ length: file.parts }, (_, p) => objectPath(bundleId, file, p));
-    if (stores[file.tier].ready || file.tier === 'vm') await stores[file.tier].remove(paths);
+    if (stores[file.tier] && stores[file.tier].ready) await stores[file.tier].remove(paths);
     await cache.drop(paths);
     used[file.tier] = Math.max(0, used[file.tier] - F.encryptedSize(file.size));
   }
@@ -330,7 +327,7 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch, verifyHum
       if (file.tier === 'vm') local = stores.vm.localPath(obj);
       else {
         const store = stores[file.tier];
-        if (!store.ready) throw httpError(503, `${file.tier}_not_configured`);
+        if (!store || !store.ready) throw httpError(503, `${file.tier}_not_configured`);
         local = await cache.get(obj, (dest) => store.download(obj, file.ref, dest));
       }
       yield* fs.createReadStream(local, { start: from, end: to, highWaterMark: 256 * 1024 });
@@ -516,7 +513,7 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch, verifyHum
   // ---- Edge delivery (Vercel) -------------------------------------------------------------------
   // The edge function sends the visitor's key here. If it matches, it gets the file list and a
   // short-lived link to every encrypted part, then fetches and decrypts the parts itself, close to
-  // the visitor. Parts on Supabase and GitHub never pass through this server.
+  // the visitor. Parts on GitHub never pass through this server.
   const EDGE_TTL = 6 * 60 * 60 * 1000;
   const partSig = (bundle, fileId, p, exp) => crypto.createHmac('sha256', config.secret).update(`ffcdn-part|${bundle}|${fileId}|${p}|${exp}`).digest('base64url');
 
@@ -533,8 +530,7 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch, verifyHum
       const paths = Array.from({ length: f.parts }, (_, p) => objectPath(b.id, f, p));
       let src = null;
       try {
-        if (f.tier === 'supabase' && stores.supabase.ready) src = await stores.supabase.signUrls(paths, EDGE_TTL / 1000);
-        else if (f.tier === 'github' && stores.github.ready && c.github.public !== false) src = paths.map((p) => stores.github.rawUrl(p, f.ref));
+        if (f.tier === 'github' && stores.github.ready && c.github.public !== false) src = paths.map((p) => stores.github.rawUrl(p, f.ref));
       } catch (e) {
         log(`cdn: direct links failed, using the server: ${e.message}`);
       }

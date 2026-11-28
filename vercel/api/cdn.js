@@ -2,7 +2,7 @@
 //
 // A download request lands on the Vercel edge node nearest the visitor. The function asks the
 // FastFlare server whether the key is right; if it is, the server answers with short-lived links to
-// the encrypted parts on Supabase, GitHub or the server. The function fetches them, decrypts and
+// the encrypted parts on GitHub or the server. The function fetches them, decrypts and
 // verifies every segment here, and streams the file. The key is never stored anywhere.
 //
 // Same URLs as the server:  /cdn/BUNDLE?key=KEY   /cdn/BUNDLE/file.png?key=KEY   ?files=a,b   ?list=1

@@ -6,7 +6,7 @@
 // its own authentication tag, its position, and whether it is the last one, so a segment cannot be
 // altered, reordered, swapped between files or cut off without the download failing. Segments are
 // grouped 44 to a part (about 44 MB), which keeps every stored object under the 50 MB limits of
-// Supabase's free plan and GitHub's large-file warning.
+// GitHub's 50 MB large-file warning and 100 MB limit.
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 

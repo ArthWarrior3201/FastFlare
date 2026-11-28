@@ -50,14 +50,15 @@
   <p><code>origins</code> is optional. When set, only browsers on those origins can request challenges for that key. Without any config the server enables a public demo key, <code>ff_demo_site</code> / <code>ff_demo_secret</code>, for testing only.</p>
 
   <h2>2 · Add the Widget to Your Page</h2>
-<pre><code>&lt;script src="https://YOUR-FASTFLARE-HOST/fastflare.js" async defer&gt;&lt;/script&gt;
+  <p>Paste this into any website, with your site key from the <a href="quickstart.html">Quick Start</a>. It loads the widget from the FastFlare network; on your own server, use its address instead.</p>
+<pre><code>&lt;script src="https://129-225-87-247.sslip.io/fastflare.js" async defer&gt;&lt;/script&gt;
 
 &lt;form method="post" action="/signup"&gt;
   &lt;input name="email" type="email" required&gt;
-  &lt;div class="ff-captcha" data-sitekey="ff_site_3f9a1c"&gt;&lt;/div&gt;
+  &lt;div class="ff-captcha" data-sitekey="YOUR_SITE_KEY"&gt;&lt;/div&gt;
   &lt;button&gt;Sign up&lt;/button&gt;
 &lt;/form&gt;</code></pre>
-  <p>This shows an <strong>"I'm not a robot"</strong> box. While the page loads, the widget quietly prepares the proof-of-work, so when the visitor clicks, verification takes a moment. People who look human are verified on the spot; anyone FastFlare is unsure about gets the quick shape puzzle. The widget adds a hidden field named <code>ff-token</code> to the form. Tokens last two minutes; after that the box unchecks itself and the visitor clicks it again. Because the script is loaded from your own FastFlare host, it knows where to talk to automatically. If you host <code>fastflare.js</code> elsewhere, add <code>data-api="https://YOUR-FASTFLARE-HOST"</code>.</p>
+  <p>This shows an <strong>"I'm not a robot"</strong> box. While the page loads, the widget quietly prepares the proof-of-work, so when the visitor clicks, verification takes a moment and the box shows <strong>Verified</strong>. People who look human are verified on the spot; anyone FastFlare is unsure about gets the quick shape puzzle. The widget adds a hidden field named <code>ff-token</code> to the form. Tokens last two minutes; after that the box unchecks itself and the visitor clicks it again. Because the script is loaded from your own FastFlare host, it knows where to talk to automatically. If you host <code>fastflare.js</code> elsewhere, add <code>data-api="https://129-225-87-247.sslip.io"</code>.</p>
 
   <h3>Options (Data Attributes or JavaScript)</h3>
   <table>
@@ -76,12 +77,12 @@
 
   <h3>Programmatic and Invisible Use</h3>
 <pre><code>// Render into any element
-const w = FastFlare.render('#box', { sitekey: 'ff_site_3f9a1c', theme: 'dark', callback: (t) =&gt; console.log(t) });
+const w = FastFlare.render('#box', { sitekey: 'YOUR_SITE_KEY', theme: 'dark', callback: (t) =&gt; console.log(t) });
 w.token();   // current token or null
 w.reset();   // solve again
 
 // No UI at all: get a token before calling your own API
-const token = await FastFlare.execute({ sitekey: 'ff_site_3f9a1c', api: 'https://YOUR-FASTFLARE-HOST' });
+const token = await FastFlare.execute({ sitekey: 'YOUR_SITE_KEY', api: 'https://129-225-87-247.sslip.io' });
 await fetch('/api/comment', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ text, 'ff-token': token }) });</code></pre>
 
@@ -90,7 +91,7 @@ await fetch('/api/comment', { method: 'POST', headers: { 'Content-Type': 'applic
   <p><code>POST /captcha/siteverify</code> with <code>secret</code>, <code>response</code> (the token) and optionally <code>remoteip</code>. JSON and form encoding both work, like reCAPTCHA.</p>
 
 <pre><code>// Node 18+
-const r = await fetch('https://YOUR-FASTFLARE-HOST/captcha/siteverify', {
+const r = await fetch('https://129-225-87-247.sslip.io/captcha/siteverify', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ secret: process.env.FF_SECRET_KEY, response: req.body['ff-token'], remoteip: req.ip }),
@@ -100,13 +101,13 @@ if (!out.success) return res.status(400).send('Bot check failed');</code></pre>
 
 <pre><code># Python
 import requests
-out = requests.post("https://YOUR-FASTFLARE-HOST/captcha/siteverify",
+out = requests.post("https://129-225-87-247.sslip.io/captcha/siteverify",
     data={"secret": SECRET, "response": request.form["ff-token"], "remoteip": request.remote_addr}).json()
 if not out["success"]:
     abort(400)</code></pre>
 
 <pre><code>// PHP
-$out = json_decode(file_get_contents('https://YOUR-FASTFLARE-HOST/captcha/siteverify', false, stream_context_create(['http' => [
+$out = json_decode(file_get_contents('https://129-225-87-247.sslip.io/captcha/siteverify', false, stream_context_create(['http' => [
   'method' => 'POST', 'header' => 'Content-Type: application/x-www-form-urlencoded',
   'content' => http_build_query(['secret' => $secret, 'response' => $_POST['ff-token'], 'remoteip' => $_SERVER['REMOTE_ADDR']]),
 ]])), true);

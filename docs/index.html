@@ -35,7 +35,7 @@
     </div>
     <div class="card">
       <h3>CDN</h3>
-      <p>Encrypted file delivery across your server, Supabase and GitHub. Every upload is locked with its own key, and downloads need it.</p>
+      <p>Encrypted file delivery from your server and GitHub, through Vercel's edge. Every upload is locked with its own key, and downloads need it.</p>
       <a class="more" href="cdn.html">Upload and Setup →</a>
     </div>
     <div class="card">
@@ -61,7 +61,7 @@ FF_SECRET=$(openssl rand -hex 32) node src/server.js</code></pre>
     <tr><td><code>FF_SECRET</code></td><td>Signing secret for CAPTCHA tokens. The installer generates one.</td></tr>
     <tr><td><code>config/sites.json</code></td><td>Your CAPTCHA site keys. See the <a href="captcha.html">bot protection guide</a>.</td></tr>
     <tr><td><code>FF_OPEN_SIGNUP=0</code>, <code>FF_DATA_DIR</code></td><td>Turn off self-serve site keys (on by default), or choose where they are saved (default <code>data/</code>).</td></tr>
-    <tr><td><code>FF_CDN_TOKEN</code>, <code>FF_SUPABASE_URL</code>, <code>FF_SUPABASE_KEY</code>, <code>FF_CDN_GITHUB_TOKEN</code></td><td>CDN upload token and storage. See the <a href="cdn.html">CDN guide</a>.</td></tr>
+    <tr><td><code>FF_CDN_TOKEN</code>, <code>FF_CDN_GITHUB_TOKEN</code>, <code>FF_CDN_EDGE_URL</code></td><td>CDN upload token and storage. See the <a href="cdn.html">CDN guide</a>.</td></tr>
     <tr><td><code>NTP_PORT</code>, <code>FF_NTP=0</code></td><td>Time server UDP port (default 123), or turn it off.</td></tr>
     <tr><td><code>FF_TIME_PROVIDERS</code></td><td>Upstream time sources. See the <a href="envtime.html">Time Server guide</a>.</td></tr>
     <tr><td><code>FF_CAPTCHA_BITS</code>, <code>FF_QUOTA_SOFT</code>, <code>FF_QUOTA_HARD</code></td><td>CAPTCHA base difficulty (default 16 bits); invisible verifications per network per 10 minutes before the puzzle is required (1); tokens per network per 10 minutes before they stop (8).</td></tr>

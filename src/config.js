@@ -82,10 +82,8 @@ export function loadConfig(overrides = {}) {
       smallMaxBytes: int(env.FF_CDN_SMALL_MB, 5) * 1048576,
       githubMaxBytes: int(env.FF_CDN_GITHUB_MAX_MB, 1024) * 1048576,
       vmCapBytes: int(env.FF_CDN_VM_MB, 20480) * 1048576,
-      supabaseCapBytes: int(env.FF_CDN_SUPABASE_MB, 950) * 1048576,
       githubCapBytes: int(env.FF_CDN_GITHUB_MB, 4500) * 1048576,
       cacheBytes: int(env.FF_CDN_CACHE_MB, 2048) * 1048576,
-      supabase: { url: env.FF_SUPABASE_URL || '', key: env.FF_SUPABASE_KEY || '', bucket: env.FF_SUPABASE_BUCKET || 'ffcdn' },
       github: {
         repo: env.FF_CDN_GITHUB_REPO || 'ArthWarrior3201/FastFlare',
         branch: env.FF_CDN_GITHUB_BRANCH || 'cdn',
