@@ -4,14 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CDN · FastFlare</title>
-<meta name="description" content="Encrypted file delivery across your server and GitHub. Every file is locked with its own key.">
+<meta name="description" content="Share files privately. Every upload is encrypted with its own key, and only people with the key can download it.">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="stylesheet" href="assets/style.css">
 <style>
-  .tool { border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin: 18px 0; background: linear-gradient(180deg, var(--panel2), var(--panel)); }
+  .tool { border: 1px solid var(--line); border-radius: 16px; padding: 22px; margin: 18px 0; background: linear-gradient(180deg, var(--panel2), var(--panel)); }
   .tool .row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 12px; }
-  .tool input, .tool select { width: 100%; box-sizing: border-box; }
-  .drop { border: 2px dashed var(--line); border-radius: 14px; padding: 26px; text-align: center; color: var(--muted); cursor: pointer; margin: 6px 0 14px; }
+  .tool input { width: 100%; box-sizing: border-box; }
+  .drop { border: 2px dashed var(--line); border-radius: 14px; padding: 34px 20px; text-align: center; color: var(--muted); cursor: pointer; margin: 0 0 14px; }
+  .drop b { display: block; color: var(--text); font-size: 17px; margin-bottom: 4px; }
   .drop.over { border-color: var(--flare); color: var(--text); }
   .files { list-style: none; padding: 0; margin: 10px 0; }
   .files li { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
@@ -20,13 +21,13 @@
   .files .ok { color: var(--ok); } .files .bad { color: var(--bad); }
   .kv { display: grid; grid-template-columns: max-content 1fr auto; gap: 8px 12px; align-items: center; margin: 12px 0; }
   .kv code { word-break: break-all; }
-  .kv button, .mini { padding: 4px 12px; font-size: 13px; }
+  .kv button { padding: 4px 12px; font-size: 13px; }
   .msg { min-height: 1.4em; margin: 8px 0 0; } .msg.err { color: var(--bad); }
   .hidden { display: none; }
-  .tiers { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin: 16px 0; }
-  .tiers div { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
-  .tiers b { display: block; font-size: 17px; margin-bottom: 4px; }
-  .tiers span { color: var(--muted); font-size: 14px; }
+  .points { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin: 16px 0; }
+  .points div { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .points b { display: block; margin-bottom: 4px; }
+  .points span { color: var(--muted); font-size: 14px; }
 </style>
 </head>
 <body>
@@ -41,61 +42,36 @@
   </nav>
 </header>
 <main>
-  <h1>Encrypted File Delivery <em>at the Edge</em></h1>
-  <p class="lead">Upload once. FastFlare encrypts every file, splits it into parts, and stores them on your server or GitHub. Downloads run on Vercel's edge network, close to every visitor, and need the key you were given at upload.</p>
+  <h1>Share Files <em>Privately</em></h1>
+  <p class="lead">Upload any file and get a private link. Every upload is encrypted with its own key, and only people who have that key can download it.</p>
 
-  <h2>How It Works</h2>
-  <div class="tiers">
-    <div><b>GitHub</b><span>Files from 5 MB to 1 GB, stored on the <code>cdn</code> branch as encrypted parts of about 44 MB each.</span></div>
-    <div><b>Your Server</b><span>Small files up to 5 MB (served from Vercel's edge cache), main files over 1 GB, anything you send there on purpose, and everything when GitHub is full or not set up.</span></div>
+  <div class="points">
+    <div><b>Encrypted</b><span>Files are locked with AES-256 as they are stored. Storage only ever holds scrambled data.</span></div>
+    <div><b>Only you hold the key</b><span>The key is created for your upload and shown to you once. It is never stored.</span></div>
+    <div><b>Fast worldwide</b><span>Downloads are delivered from the network location nearest each visitor.</span></div>
+    <div><b>No account</b><span>Upload straight from this page. A quick "I'm not a robot" check keeps it free of abuse.</span></div>
   </div>
-  <ol>
-    <li>You upload through your FastFlare server. It encrypts each file with <strong>AES-256-GCM</strong> using a new random 256-bit key, in 1 MB segments that each carry their own tamper check.</li>
-    <li>The encrypted parts (<code>.ffencrypted</code>) go to the store that suits the file's size. GitHub only ever holds encrypted data with meaningless names.</li>
-    <li>When every file is in, you get the bundle ID and the key, <strong>once</strong>. No key is needed to upload, and anyone can upload after the "I'm not a robot" check. The server keeps only a fingerprint of the key, so it can check requests but cannot decrypt anything on its own.</li>
-    <li>A download goes to the Vercel edge node nearest the visitor. The edge asks your server whether the key is right; if it is, the server hands back short-lived links to the encrypted parts. The edge fetches them straight from GitHub (or from your server), decrypts and checks every segment, and streams the file. A wrong key gets nothing, and an altered part stops the download.</li>
-    <li>Your server only checks keys and hands out links, so its own connection is no longer the limit for files stored on GitHub.</li>
-  </ol>
-  <div class="note"><strong>About the key.</strong> AES-256 is the standard for encrypting files, and it is far stronger than a 2048-bit RSA key. Lose the key and the files cannot be recovered by anyone, including you. Save it in a password manager or on your own server.</div>
-
-  <h2>Smart Routing</h2>
-  <p>Every download link is the same, and FastFlare picks the fastest path for the file behind it:</p>
-  <table>
-    <tr><th>File</th><th>Route</th><th>Why</th></tr>
-    <tr><td>Small (up to 25 MB)</td><td>Vercel edge</td><td>Served from the edge node nearest the visitor, and cached there.</td></tr>
-    <tr><td>Normal (25 to 500 MB)</td><td>Your server, directly</td><td>One steady stream, with resuming. No time limit.</td></tr>
-    <tr><td>Extra large (over 500 MB)</td><td>Chunked download</td><td>The browser opens a download page that fetches the file in 32 MB pieces, four at a time, through the edge, and joins them on the visitor's device. Each piece finishes well inside Vercel's 300-second limit.</td></tr>
-  </table>
-  <p>Download tools such as <code>curl</code> and download managers always get the file directly, and a request for part of a file (video seeking, resuming) is answered wherever it arrives. Add <code>&amp;route=edge</code>, <code>&amp;route=native</code> or <code>&amp;route=chunked</code> to a link to force a route. Change the sizes with <code>FF_ROUTE_SMALL_MB</code> and <code>FF_ROUTE_XL_MB</code>, set to the same values on the server and on Vercel.</p>
-  <p>Chunked downloads save straight to disk in Chrome and Edge. Other browsers join the pieces in memory for files up to 2 GB; above that, the page offers the standard download.</p>
 
   <h2>Upload</h2>
   <div class="tool">
-    <div class="row">
-      <div><label for="u-api">FastFlare server</label><input id="u-api"></div>
-      <div><label for="u-token">Owner token (optional)</label><input id="u-token" type="password" autocomplete="off" placeholder="Leave empty to upload as a visitor"></div>
-      <div><label for="u-tier">Store</label>
-        <select id="u-tier"><option value="auto">Automatic (by size)</option><option value="vm">My server</option><option value="github">GitHub</option></select></div>
-    </div>
-    <details id="u-addto"><summary>Add to an existing bundle</summary>
-      <div class="row" style="margin-top:10px">
-        <div><label for="u-bundle">Bundle ID</label><input id="u-bundle"></div>
-        <div><label for="u-key">Key</label><input id="u-key" type="password" autocomplete="off" placeholder="ffk_…"></div>
-      </div>
-      <p style="color:var(--muted);font-size:14px">A file with the same name as one already in the bundle replaces it.</p>
-    </details>
-    <div class="drop" id="drop" tabindex="0" role="button">Drop files here or click to choose</div>
+    <div class="drop" id="drop" tabindex="0" role="button"><b>Drop files here</b>or click to choose. Up to 1 GB per file.</div>
     <input type="file" id="pick" multiple hidden>
     <ul class="files" id="queue"></ul>
-    <div id="u-human" style="margin:6px 0 14px"></div>
+    <details id="u-addto"><summary>Add these files to an existing upload</summary>
+      <div class="row" style="margin-top:10px">
+        <div><label for="u-bundle">Upload ID</label><input id="u-bundle" autocomplete="off"></div>
+        <div><label for="u-key">Key</label><input id="u-key" type="password" autocomplete="off" placeholder="ffk_…"></div>
+      </div>
+    </details>
+    <div id="u-human" style="margin:14px 0"></div>
     <button class="btn" id="u-go" disabled>Upload</button>
     <p class="msg" id="u-msg" role="status"></p>
     <div id="u-out" class="hidden">
-      <div class="note"><strong>Your decryption key.</strong> Anyone with it can download these files, and without it nobody can, not even the server. It is shown only once: save it now.</div>
+      <div class="note"><strong>Save your key now.</strong> Anyone with the link below can download these files. Without the key nobody can, and it cannot be recovered or reset.</div>
       <div class="kv">
-        <span>Bundle</span><code id="o-bundle"></code><button class="btn ghost" data-copy="o-bundle">Copy</button>
+        <span>Link</span><code id="o-all"></code><button class="btn ghost" data-copy="o-all">Copy</button>
+        <span>Upload ID</span><code id="o-bundle"></code><button class="btn ghost" data-copy="o-bundle">Copy</button>
         <span>Key</span><code id="o-key"></code><button class="btn ghost" data-copy="o-key">Copy</button>
-        <span>All files</span><code id="o-all"></code><button class="btn ghost" data-copy="o-all">Copy</button>
       </div>
       <button class="btn ghost" id="o-save">Save Key File</button>
     </div>
@@ -103,98 +79,62 @@
 
   <h2>Download</h2>
   <div class="tool">
+    <p style="margin-top:0">Have a link? Just open it. Have an upload ID and key? Enter them here.</p>
     <div class="row">
-      <div><label for="d-edge">Download address (Vercel)</label><input id="d-edge" placeholder="https://your-project.vercel.app"></div>
-      <div><label for="d-bundle">Bundle ID</label><input id="d-bundle"></div>
+      <div><label for="d-bundle">Upload ID</label><input id="d-bundle" autocomplete="off"></div>
       <div><label for="d-key">Key</label><input id="d-key" type="password" autocomplete="off" placeholder="ffk_…"></div>
     </div>
-    <button class="btn" id="d-go">Open Bundle</button>
+    <button class="btn" id="d-go">Open</button>
     <p class="msg" id="d-msg" role="status"></p>
     <ul class="files" id="d-list"></ul>
     <p id="d-all" class="hidden"><a class="btn" id="d-zip" href="#">Download All</a></p>
   </div>
 
-  <h2>Links and API</h2>
-  <p>Share links on your Vercel address, for example <code>https://your-project.vercel.app/cdn/BUNDLE?key=KEY</code>. The same paths also work directly on your server. Every link carries the key, either as <code>?key=</code> or as an <code>X-FF-Key</code> header. Use the header from your own code when the key should not appear in a URL.</p>
-  <table>
-    <tr><th>Request</th><th>Returns</th></tr>
-    <tr><td><code>GET /cdn/BUNDLE?key=KEY</code></td><td>Every file: one file as itself, several as a <code>.zip</code>.</td></tr>
-    <tr><td><code>GET /cdn/BUNDLE?key=KEY&amp;files=logo.png,app.css</code></td><td>Only those files.</td></tr>
-    <tr><td><code>GET /cdn/BUNDLE/logo.png?key=KEY</code></td><td>One file. Images, audio, video and PDFs open in the browser, so this works in <code>&lt;img src&gt;</code>. Supports <code>Range</code> for resuming and seeking. Add <code>&amp;download=1</code> to force a download.</td></tr>
-    <tr><td><code>GET /cdn/BUNDLE?key=KEY&amp;list=1</code></td><td>File names, sizes and stores as JSON.</td></tr>
-    <tr><td><code>PUT /cdn/upload?name=FILE</code></td><td>Upload one file (the request body). The first file needs a FastFlare human-check token (<code>X-FF-Captcha</code>) or the owner token (<code>Authorization: Bearer TOKEN</code>). It returns the bundle and an upload ticket; send the ticket as <code>X-FF-Ticket</code> with the other files of the batch. Add <code>&amp;done=1</code> to the last file to get the key straight away. The owner can also add <code>&amp;tier=vm|github</code>.</td></tr>
-    <tr><td><code>POST /cdn/finish</code> with <code>X-FF-Ticket</code></td><td>Ends the batch and returns the decryption key and the download link.</td></tr>
-    <tr><td><code>PUT /cdn/upload?name=FILE&amp;bundle=ID</code> with <code>X-FF-Key</code></td><td>Add a file to a bundle you already have the key for.</td></tr>
-    <tr><td><code>DELETE /cdn/BUNDLE[/FILE]</code></td><td>Remove a file or the whole bundle. Needs the upload token.</td></tr>
-    <tr><td><code>GET /cdn/status</code>, <code>GET /cdn/bundles</code></td><td>Space used per store, and your bundles. Need the upload token.</td></tr>
-  </table>
-  <p>The owner can upload from scripts. From PowerShell:</p>
-<pre><code>Invoke-RestMethod -Method Put -InFile .\setup.exe -Headers @{ Authorization = "Bearer YOUR_TOKEN" } `
-  -Uri "https://129-225-87-247.sslip.io/cdn/upload?name=setup.exe&amp;done=1"</code></pre>
-  <p>From macOS or Linux:</p>
-<pre><code>curl -T setup.exe -H "Authorization: Bearer YOUR_TOKEN" "https://129-225-87-247.sslip.io/cdn/upload?name=setup.exe&amp;done=1"</code></pre>
-
-  <h2>Set Up the Stores</h2>
-  <p>The CDN works with just your server. GitHub is optional: until it is set up, files go to your server.</p>
-  <ol class="steps">
-    <li><strong>Choose an owner token (for you only)</strong>
-      Visitors upload with the human check and per-network limits. Your owner token skips both and lets you choose the store and delete files. Keep it private.
-<pre><code>echo "FF_CDN_TOKEN=$(openssl rand -hex 24)" | sudo tee -a /etc/fastflare.env</code></pre>
-    </li>
-    <li><strong>GitHub (large files)</strong>
-      On GitHub, open <em>Settings → Developer settings → Fine-grained tokens → Generate new token</em>. Give it access to the FastFlare repository only, with <em>Contents: Read and write</em>. Then add it:
-<pre><code>echo "FF_CDN_GITHUB_TOKEN=github_pat_YOUR_TOKEN" | sudo tee -a /etc/fastflare.env</code></pre>
-      Parts are committed to the <code>cdn</code> branch. To use another repository or branch, set <code>FF_CDN_GITHUB_REPO=owner/name</code> and <code>FF_CDN_GITHUB_BRANCH</code>.
-    </li>
-    <li><strong>Vercel (fast downloads)</strong>
-      Sign in at vercel.com with GitHub and choose <em>Add New → Project</em>. Import the <strong>FastFlare</strong> repository, set <em>Root Directory</em> to <code>vercel</code>, and under <em>Environment Variables</em> add <code>FF_ORIGIN</code> = <code>https://129-225-87-247.sslip.io</code>. Press <em>Deploy</em>. Copy the address Vercel gives you and tell the server about it, so upload links use it:
-<pre><code>echo "FF_CDN_EDGE_URL=https://YOUR-PROJECT.vercel.app" | sudo tee -a /etc/fastflare.env</code></pre>
-    </li>
-    <li><strong>Restart</strong>
-<pre><code>sudo systemctl restart fastflare</code></pre>
-      Check what is set up with <code>GET /cdn/status</code>, or upload a test file above.
-    </li>
+  <h2>How It Works</h2>
+  <ol>
+    <li>Your files are encrypted as they arrive, with a key made just for this upload, and split into tamper-proof parts.</li>
+    <li>When every file is in, you get a link, an upload ID and the key. The service keeps only a fingerprint of the key: enough to check it, never enough to open your files.</li>
+    <li>When someone opens the link, the nearest delivery location checks the key, decrypts the file on the fly and verifies every part. A wrong key gets nothing, and a damaged file is refused rather than delivered.</li>
+    <li>Small files open instantly from a nearby cache. Very large files download in several parts at once and are joined on the visitor's device.</li>
   </ol>
 
-  <h3>Settings</h3>
-  <table>
-    <tr><th>Setting</th><th>Default</th><th>Meaning</th></tr>
-    <tr><td><code>FF_CDN_SMALL_MB</code></td><td>5</td><td>Files up to this size stay on your server; Vercel caches them at the edge.</td></tr>
-    <tr><td><code>FF_CDN_GITHUB_MAX_MB</code></td><td>1024</td><td>Files above the small size and up to this go to GitHub; larger ones to your server.</td></tr>
-    <tr><td><code>FF_CDN_GITHUB_MB</code>, <code>FF_CDN_VM_MB</code></td><td>4500, 20480</td><td>Space each store may use. When one is full, automatic uploads go to the next.</td></tr>
-    <tr><td><code>FF_CDN_MAX_MB</code></td><td>4096</td><td>Largest single upload by the owner.</td></tr>
-    <tr><td><code>FF_CDN_PUBLIC_UPLOAD</code></td><td>1</td><td>Set to <code>0</code> to allow only the owner to upload.</td></tr>
-    <tr><td><code>FF_CDN_PUBLIC_FILE_MB</code>, <code>FF_CDN_PUBLIC_DAY_MB</code>, <code>FF_CDN_PUBLIC_DAY_FILES</code></td><td>1024, 2048, 50</td><td>Visitor limits: largest file, and total size and number of files per network per day.</td></tr>
-    <tr><td><code>FF_CDN_CACHE_MB</code></td><td>2048</td><td>Server-side cache for parts fetched from GitHub.</td></tr>
-  </table>
+  <h2>Questions</h2>
+  <h3>I lost my key. Can it be reset?</h3>
+  <p>No. The key is never stored, so nobody can recover it. That is what keeps your files private. Use <strong>Save Key File</strong> or a password manager.</p>
+  <h3>Who can see my files?</h3>
+  <p>Only people you give the link or key to. Storage holds encrypted parts with random names, and the service itself cannot decrypt them without your key.</p>
+  <h3>What are the limits?</h3>
+  <p>Up to 1 GB per file, and up to 50 files or 2 GB per network each day. Very large files download best in Chrome or Edge, which save them straight to disk.</p>
+  <h3>Can I use links on my website?</h3>
+  <p>Yes. A link to a single image, video, audio file or PDF opens directly in the browser, so it works in <code>&lt;img&gt;</code> and <code>&lt;video&gt;</code> tags. Add <code>&amp;download=1</code> to make it download instead.</p>
 
-  <h3>Limits Worth Knowing</h3>
-  <ul>
-    <li>GitHub asks that repositories stay under 5 GB. Deleting a file removes it from the <code>cdn</code> branch, but it stays in the branch history and still counts. Cloning the repository normally also fetches this branch: use <code>git clone --single-branch</code> for the code only.</li>
-    <li>Vercel's free plan includes 100 GB of downloads a month, and an edge response can stream for up to 300 seconds, which is why large files go in chunks. Files stored on your server still travel from it to the edge, so for the fastest chunked downloads keep large files on GitHub.</li>
-    <li>Small single files opened by a <code>?key=</code> link are cached on Vercel's network for a day, so repeat downloads do not touch your server at all.</li>
-  </ul>
+  <h2>For Developers</h2>
+  <table>
+    <tr><th>Request</th><th>Returns</th></tr>
+    <tr><td><code>GET /cdn/ID?key=KEY</code></td><td>Every file in the upload: a single file as itself, several as a <code>.zip</code>.</td></tr>
+    <tr><td><code>GET /cdn/ID/NAME?key=KEY</code></td><td>One file, with <code>Range</code> support for resuming and seeking.</td></tr>
+    <tr><td><code>GET /cdn/ID?key=KEY&amp;files=a.png,b.css</code></td><td>Only the listed files.</td></tr>
+    <tr><td><code>GET /cdn/ID?key=KEY&amp;list=1</code></td><td>The file list as JSON.</td></tr>
+  </table>
+  <p>The key can also be sent as an <code>X-FF-Key</code> header, which keeps it out of URLs and logs. To run this service on your own servers, see <a href="cdn-hosting.html">Host Your Own CDN</a>.</p>
 </main>
 <footer>FastFlare</footer>
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
-  var defApi = /github\.io$/.test(location.hostname) || location.protocol === 'file:' ? 'https://129-225-87-247.sslip.io' : location.origin;
-  $('u-api').value = store.get('ffcdn-api') || defApi;
-  $('u-token').value = store.get('ffcdn-token') || '';
-  $('d-edge').value = store.get('ffcdn-edge') || '';
-  var api = function () { return $('u-api').value.trim().replace(/\/$/, ''); };
+  var onPages = /github\.io$/.test(location.hostname) || location.protocol === 'file:';
+  var API = onPages ? 'https://129-225-87-247.sslip.io' : location.origin;
+  var EDGE = 'https://fastflare-vercel.vercel.app';
   var size = function (n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB'; };
   var ERR = {
-    unauthorized: 'The owner token is not right.', cdn_upload_disabled: 'Uploads are off on this server.',
-    human_check_required: 'Tick "I\'m not a robot" first.', human_check_failed: 'The human check expired. Tick it again and press Upload.',
-    daily_limit: 'This network has reached today\'s upload limit.', tier_owner_only: 'Only the owner can choose the store.', ticket_expired: 'This upload session expired. Start again.',
-    invalid_key: 'That key does not match this bundle.', bundle_not_found: 'No bundle with that ID.', not_found: 'No bundle with that ID.',
-    too_large: 'This file is larger than the server allows.', tier_not_configured: 'That store is not set up on the server.',
-    tier_full: 'That store is full.', storage_full: 'All stores are full.', name_required: 'File name is not allowed.',
+    invalid_key: 'That key does not match this upload.', bundle_not_found: 'No upload with that ID.', not_found: 'No upload with that ID.',
+    too_large: 'This file is larger than 1 GB.', storage_full: 'The service is full right now. Please try again later.',
+    name_required: 'This file name is not allowed.', human_check_required: 'Tick "I\'m not a robot" first.',
+    human_check_failed: 'The check expired. Tick "I\'m not a robot" again and press Upload.',
+    daily_limit: 'Your network has reached today\'s upload limit. Please try again tomorrow.',
+    ticket_expired: 'This upload took too long. Please start again.', cdn_upload_disabled: 'Uploads are paused right now.',
   };
-  var errText = function (code) { return ERR[code] || ('Failed (' + (code || 'network error') + ').'); };
+  var errText = function (code) { return ERR[code] || (code ? 'Something went wrong (' + code + ').' : 'Could not connect. Check your connection and try again.'); };
 
   // ---- Upload ----
   var queue = [];
@@ -203,7 +143,7 @@
       var f = list[i];
       var li = document.createElement('li');
       li.innerHTML = '<span></span><span class="st"></span><span class="bar"><i></i></span>';
-      li.firstChild.textContent = (f.webkitRelativePath || f.name) + ' · ' + size(f.size);
+      li.firstChild.textContent = f.name + ' · ' + size(f.size);
       $('queue').appendChild(li);
       queue.push({ file: f, li: li, done: false });
     }
@@ -216,58 +156,45 @@
   ['dragleave', 'drop'].forEach(function (t) { $('drop').addEventListener(t, function (e) { e.preventDefault(); $('drop').classList.remove('over'); }); });
   $('drop').addEventListener('drop', function (e) { addFiles(e.dataTransfer.files); });
 
-  // Visitors prove they are human once per batch; the owner token skips the check.
   var human = null, widget = null;
-  function loadWidget() {
-    if ($('u-token').value.trim()) { $('u-human').hidden = true; $('u-tier').disabled = false; return; }
-    $('u-human').hidden = false; $('u-tier').value = 'auto'; $('u-tier').disabled = true;
-    if (widget) return;
+  (function loadWidget() {
     var s = document.createElement('script');
-    s.src = api() + '/fastflare.js';
-    s.onload = function () { widget = window.FastFlare.render('#u-human', { sitekey: 'ff_site_cdn', api: api(), callback: function (t) { human = t; } }); };
-    s.onerror = function () { $('u-msg').textContent = 'Could not reach ' + api() + ' to load the human check.'; $('u-msg').className = 'msg err'; };
+    s.src = API + '/fastflare.js';
+    s.onload = function () { widget = window.FastFlare.render('#u-human', { sitekey: 'ff_site_cdn', api: API, callback: function (t) { human = t; } }); };
+    s.onerror = function () { $('u-msg').textContent = 'Uploads are unavailable right now. Please try again in a few minutes.'; $('u-msg').className = 'msg err'; };
     document.head.appendChild(s);
-  }
-  $('u-token').addEventListener('change', loadWidget);
-  loadWidget();
+  })();
 
   function send(item, ctx) {
     return new Promise(function (resolve, reject) {
       var x = new XMLHttpRequest();
-      var u = api() + '/cdn/upload?name=' + encodeURIComponent(item.file.name) + '&tier=' + $('u-tier').value +
-        (!ctx.ticket && ctx.bundle ? '&bundle=' + encodeURIComponent(ctx.bundle) : '');
-      x.open('PUT', u);
-      var tok = $('u-token').value.trim();
-      if (tok) x.setRequestHeader('Authorization', 'Bearer ' + tok);
+      x.open('PUT', API + '/cdn/upload?name=' + encodeURIComponent(item.file.name) + (!ctx.ticket && ctx.bundle ? '&bundle=' + encodeURIComponent(ctx.bundle) : ''));
       if (ctx.ticket) x.setRequestHeader('X-FF-Ticket', ctx.ticket);
       else {
         if (ctx.key) x.setRequestHeader('X-FF-Key', ctx.key);
-        if (!tok) x.setRequestHeader('X-FF-Captcha', human);
+        x.setRequestHeader('X-FF-Captcha', human);
       }
       var bar = item.li.querySelector('.bar i'), st = item.li.querySelector('.st');
       x.upload.onprogress = function (e) { if (e.lengthComputable) { bar.style.width = (e.loaded / e.total * 100) + '%'; st.textContent = e.loaded === e.total ? 'Encrypting…' : Math.round(e.loaded / e.total * 100) + '%'; } };
       x.onload = function () {
         var j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
-        if (x.status === 201) { bar.style.width = '100%'; st.textContent = 'Encrypted and stored on ' + ({ vm: 'server', github: 'GitHub' })[j.file.tier]; st.className = 'st ok'; resolve(j); }
+        if (x.status === 201) { bar.style.width = '100%'; st.textContent = 'Encrypted'; st.className = 'st ok'; resolve(j); }
         else { st.textContent = errText(j.error); st.className = 'st bad'; reject(new Error(j.error || 'failed')); }
       };
-      x.onerror = function () { st.textContent = 'Could not reach the server'; st.className = 'st bad'; reject(new Error('network')); };
+      x.onerror = function () { st.textContent = errText(); st.className = 'st bad'; reject(new Error('network')); };
       x.send(item.file);
     });
   }
 
   var ctx = null;
   $('u-go').onclick = function () {
-    var tok = $('u-token').value.trim();
     if (!ctx || !ctx.ticket) {
       ctx = { bundle: $('u-bundle').value.trim(), key: $('u-key').value.trim(), ticket: null };
-      if (!tok && !human) { $('u-msg').textContent = 'Tick "I\'m not a robot" first.'; $('u-msg').className = 'msg err'; return; }
+      if (!human) { $('u-msg').textContent = 'Tick "I\'m not a robot" first.'; $('u-msg').className = 'msg err'; return; }
     }
-    store.set('ffcdn-api', api()); if (tok) store.set('ffcdn-token', tok);
-    $('u-go').disabled = true; $('u-msg').textContent = ''; $('u-msg').className = 'msg';
-    var todo = queue.filter(function (q) { return !q.done; });
+    $('u-go').disabled = true; $('u-msg').textContent = 'Uploading…'; $('u-msg').className = 'msg';
     var chain = Promise.resolve(), fails = 0;
-    todo.forEach(function (item) {
+    queue.filter(function (q) { return !q.done; }).forEach(function (item) {
       chain = chain.then(function () {
         return send(item, ctx).then(function (j) { item.done = true; ctx.ticket = j.ticket; ctx.bundle = j.bundle; }, function () { fails++; });
       });
@@ -276,17 +203,16 @@
       human = null;
       if (widget) widget.reset();
       if (fails) {
-        $('u-msg').textContent = fails + ' file(s) failed. Fix the problem and press Upload to retry them.';
+        $('u-msg').textContent = fails === 1 ? 'One file did not upload. Press Upload to try it again.' : fails + ' files did not upload. Press Upload to try them again.';
         $('u-msg').className = 'msg err'; $('u-go').disabled = false;
         if (!ctx.ticket) ctx = null;
         return;
       }
-      // All files are in: now trade the ticket for the decryption key.
-      return fetch(api() + '/cdn/finish', { method: 'POST', headers: { 'X-FF-Ticket': ctx.ticket } })
+      return fetch(API + '/cdn/finish', { method: 'POST', headers: { 'X-FF-Ticket': ctx.ticket } })
         .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(errText(j.error)); return j; }); })
         .then(function (j) {
           showKey(j);
-          $('u-msg').textContent = 'All files encrypted and stored. Your key is below.';
+          $('u-msg').textContent = 'Done. Your files are encrypted and ready to share.';
           $('d-bundle').value = j.bundle; $('d-key').value = j.key; openBundle();
           ctx = null;
           $('u-go').disabled = !queue.some(function (q) { return !q.done; });
@@ -296,12 +222,12 @@
   function showKey(j) {
     $('o-bundle').textContent = j.bundle;
     $('o-key').textContent = j.key;
-    $('o-all').textContent = (/^https?:/.test(j.bundleUrl) ? j.bundleUrl : api() + j.bundleUrl) + '?key=' + j.key;
+    $('o-all').textContent = EDGE + '/cdn/' + j.bundle + '?key=' + j.key;
     $('u-out').classList.remove('hidden');
   }
   $('o-save').onclick = function () {
-    var t = 'FastFlare CDN\nServer: ' + api() + '\nBundle: ' + $('o-bundle').textContent + '\nKey: ' + $('o-key').textContent +
-      '\nAll files: ' + $('o-all').textContent + '\n\nKeep this file private. Without the key the files cannot be decrypted.\n';
+    var t = 'FastFlare CDN\nLink: ' + $('o-all').textContent + '\nUpload ID: ' + $('o-bundle').textContent + '\nKey: ' + $('o-key').textContent +
+      '\n\nKeep this file private. Anyone with the key can download these files, and without it nobody can.\n';
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([t], { type: 'text/plain' }));
     a.download = 'fastflare-' + $('o-bundle').textContent + '.key.txt';
@@ -315,27 +241,25 @@
   function openBundle() {
     var b = $('d-bundle').value.trim(), k = $('d-key').value.trim();
     $('d-list').innerHTML = ''; $('d-all').classList.add('hidden'); $('d-msg').className = 'msg'; $('d-msg').textContent = 'Opening…';
-    if (!b || !k) { $('d-msg').textContent = 'Enter the bundle ID and key.'; $('d-msg').className = 'msg err'; return; }
-    var edge = $('d-edge').value.trim().replace(/\/$/, '');
-    store.set('ffcdn-edge', edge);
-    var base = (edge || api()) + '/cdn/' + encodeURIComponent(b);
-    fetch(base + '?list=1', { headers: { 'X-FF-Key': k } })
+    if (!b || !k) { $('d-msg').textContent = 'Enter the upload ID and key.'; $('d-msg').className = 'msg err'; return; }
+    fetch(API + '/cdn/' + encodeURIComponent(b) + '?list=1', { headers: { 'X-FF-Key': k } })
       .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(errText(j.error)); return j; }); })
       .then(function (j) {
-        $('d-msg').textContent = j.files.length + ' file(s).';
+        var base = EDGE + '/cdn/' + encodeURIComponent(b);
+        $('d-msg').textContent = j.files.length === 1 ? '1 file' : j.files.length + ' files';
         j.files.forEach(function (f) {
           var li = document.createElement('li');
           var a = document.createElement('a');
           a.href = base + '/' + f.name.split('/').map(encodeURIComponent).join('/') + '?key=' + encodeURIComponent(k) + '&download=1';
           a.textContent = f.name;
           var s = document.createElement('span');
-          s.textContent = size(f.size) + ' · ' + ({ vm: 'server', github: 'GitHub' })[f.tier];
+          s.textContent = size(f.size);
           li.appendChild(a); li.appendChild(s);
           $('d-list').appendChild(li);
         });
         if (j.files.length) { $('d-zip').href = base + '?key=' + encodeURIComponent(k) + (j.files.length === 1 ? '&download=1' : ''); $('d-all').classList.remove('hidden'); }
       })
-      .catch(function (e) { $('d-msg').textContent = e.message === 'Failed to fetch' ? 'Could not reach ' + api() + '.' : e.message; $('d-msg').className = 'msg err'; });
+      .catch(function (e) { $('d-msg').textContent = e.message === 'Failed to fetch' ? errText() : e.message; $('d-msg').className = 'msg err'; });
   }
   $('d-go').onclick = openBundle;
 })();

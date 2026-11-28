@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Host Your Own CDN · FastFlare</title>
+<meta name="description" content="Run the FastFlare CDN on your own server: storage on the server and GitHub, delivery through Vercel's edge network.">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .tiers { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin: 16px 0; }
+  .tiers div { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .tiers b { display: block; font-size: 17px; margin-bottom: 4px; }
+  .tiers span { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">Fast<span>Flare</span></a>
+  <nav>
+    <a href="quickstart.html">Quick Start</a>
+    <a href="captcha.html">Bot Protection</a>
+    <a href="cdn.html">CDN</a>
+    <a href="envtime.html">Time Server (NTP)</a>
+    <a href="https://github.com/ArthWarrior3201/FastFlare">GitHub</a>
+  </nav>
+</header>
+<main>
+  <h1>Host Your Own <em>CDN</em></h1>
+  <p class="lead">Run the FastFlare CDN on your own server. Files are encrypted on upload and stored on the server or a GitHub branch; downloads are decrypted and delivered by Vercel's edge network, close to every visitor.</p>
+
+  <h2>Where Files Are Stored</h2>
+  <div class="tiers">
+    <div><b>GitHub</b><span>Files from 5 MB to 1 GB, stored on the <code>cdn</code> branch as encrypted parts of about 44 MB each.</span></div>
+    <div><b>Your Server</b><span>Small files up to 5 MB (cached at the edge), files over 1 GB, anything the owner sends there on purpose, and everything when GitHub is full or not set up.</span></div>
+  </div>
+
+  <p>Every file is encrypted with AES-256-GCM in 1 MB segments and split into <code>.ffencrypted</code> parts of about 44 MB. Storage only ever holds encrypted parts with random names. The server keeps a fingerprint of each upload's key, never the key itself.</p>
+
+  <h2>Smart Routing</h2>
+  <p>Every download link is the same, and FastFlare picks the fastest path for the file behind it:</p>
+  <table>
+    <tr><th>File</th><th>Route</th><th>Why</th></tr>
+    <tr><td>Small (up to 25 MB)</td><td>Vercel edge</td><td>Served from the edge node nearest the visitor, and cached there.</td></tr>
+    <tr><td>Normal (25 to 500 MB)</td><td>Your server, directly</td><td>One steady stream, with resuming. No time limit.</td></tr>
+    <tr><td>Extra large (over 500 MB)</td><td>Chunked download</td><td>The browser opens a download page that fetches the file in 32 MB pieces, four at a time, through the edge, and joins them on the visitor's device. Each piece finishes well inside Vercel's 300-second limit.</td></tr>
+  </table>
+  <p>Download tools such as <code>curl</code> and download managers always get the file directly, and a request for part of a file (video seeking, resuming) is answered wherever it arrives. Add <code>&amp;route=edge</code>, <code>&amp;route=native</code> or <code>&amp;route=chunked</code> to a link to force a route. Change the sizes with <code>FF_ROUTE_SMALL_MB</code> and <code>FF_ROUTE_XL_MB</code>, set to the same values on the server and on Vercel.</p>
+  <p>Chunked downloads save straight to disk in Chrome and Edge. Other browsers join the pieces in memory for files up to 2 GB; above that, the page offers the standard download.</p>
+
+  <h2>Setup</h2>
+  <p>The CDN runs on any FastFlare server (see the <a href="index.html">install guide</a>). With nothing else configured, files are stored on the server itself. GitHub storage and Vercel delivery are optional and can be added at any time.</p>
+  <ol class="steps">
+    <li><strong>Choose an owner token (for you only)</strong>
+      Visitors upload with the "I'm not a robot" check and per-network limits. The owner token skips both, lets you choose where a file is stored, and is needed to delete files and see usage. Keep it private.
+<pre><code>echo "FF_CDN_TOKEN=$(openssl rand -hex 24)" | sudo tee -a /etc/fastflare.env</code></pre>
+    </li>
+    <li><strong>GitHub (large files)</strong>
+      On GitHub, open <em>Settings → Developer settings → Fine-grained tokens → Generate new token</em>. Give it access to the FastFlare repository only, with <em>Contents: Read and write</em>. Then add it:
+<pre><code>echo "FF_CDN_GITHUB_TOKEN=github_pat_YOUR_TOKEN" | sudo tee -a /etc/fastflare.env</code></pre>
+      Parts are committed to the <code>cdn</code> branch. To use another repository or branch, set <code>FF_CDN_GITHUB_REPO=owner/name</code> and <code>FF_CDN_GITHUB_BRANCH</code>.
+    </li>
+    <li><strong>Vercel (fast downloads)</strong>
+      Sign in at vercel.com with GitHub and choose <em>Add New → Project</em>. Import the <strong>FastFlare</strong> repository, set <em>Root Directory</em> to <code>vercel</code>, and under <em>Environment Variables</em> add <code>FF_ORIGIN</code> = <code>https://YOUR-SERVER</code>. Press <em>Deploy</em>. Copy the address Vercel gives you and tell the server about it, so upload links use it:
+<pre><code>echo "FF_CDN_EDGE_URL=https://YOUR-PROJECT.vercel.app" | sudo tee -a /etc/fastflare.env</code></pre>
+    </li>
+    <li><strong>Restart</strong>
+<pre><code>sudo systemctl restart fastflare</code></pre>
+      Check what is set up with <code>GET /cdn/status</code>, or upload a test file above.
+    </li>
+  </ol>
+
+  <h2>Owner API</h2>
+  <table>
+    <tr><th>Request</th><th>What it does</th></tr>
+    <tr><td><code>PUT /cdn/upload?name=FILE</code></td><td>Upload one file (the request body). The first file of a batch needs the owner token (<code>Authorization: Bearer TOKEN</code>) or a FastFlare human-check token (<code>X-FF-Captcha</code>). It returns an upload ticket; send it as <code>X-FF-Ticket</code> with the rest of the batch. Add <code>&amp;done=1</code> to the last file to receive the key. The owner can add <code>&amp;tier=vm|github</code>.</td></tr>
+    <tr><td><code>POST /cdn/finish</code> with <code>X-FF-Ticket</code></td><td>Ends a batch and returns the key and link.</td></tr>
+    <tr><td><code>PUT /cdn/upload?name=FILE&amp;bundle=ID</code> with <code>X-FF-Key</code></td><td>Adds a file to an existing upload.</td></tr>
+    <tr><td><code>DELETE /cdn/ID[/NAME]</code></td><td>Removes a file or a whole upload. Owner token required.</td></tr>
+    <tr><td><code>GET /cdn/status</code>, <code>GET /cdn/bundles</code></td><td>Space used per store, and every upload. Owner token required.</td></tr>
+  </table>
+  <p>Upload from PowerShell:</p>
+<pre><code>Invoke-RestMethod -Method Put -InFile .\setup.exe -Headers @{ Authorization = "Bearer YOUR_TOKEN" } `
+  -Uri "https://YOUR-SERVER/cdn/upload?name=setup.exe&amp;done=1"</code></pre>
+  <p>From macOS or Linux:</p>
+<pre><code>curl -T setup.exe -H "Authorization: Bearer YOUR_TOKEN" "https://YOUR-SERVER/cdn/upload?name=setup.exe&amp;done=1"</code></pre>
+
+  <h2>Settings</h2>
+  <table>
+    <tr><th>Setting</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td><code>FF_CDN_SMALL_MB</code></td><td>5</td><td>Files up to this size stay on your server; Vercel caches them at the edge.</td></tr>
+    <tr><td><code>FF_CDN_GITHUB_MAX_MB</code></td><td>1024</td><td>Files above the small size and up to this go to GitHub; larger ones to your server.</td></tr>
+    <tr><td><code>FF_CDN_GITHUB_MB</code>, <code>FF_CDN_VM_MB</code></td><td>4500, 20480</td><td>Space each store may use. When one is full, automatic uploads go to the next.</td></tr>
+    <tr><td><code>FF_CDN_MAX_MB</code></td><td>4096</td><td>Largest single upload by the owner.</td></tr>
+    <tr><td><code>FF_CDN_PUBLIC_UPLOAD</code></td><td>1</td><td>Set to <code>0</code> to allow only the owner to upload.</td></tr>
+    <tr><td><code>FF_CDN_PUBLIC_FILE_MB</code>, <code>FF_CDN_PUBLIC_DAY_MB</code>, <code>FF_CDN_PUBLIC_DAY_FILES</code></td><td>1024, 2048, 50</td><td>Visitor limits: largest file, and total size and number of files per network per day.</td></tr>
+    <tr><td><code>FF_CDN_CACHE_MB</code></td><td>2048</td><td>Server-side cache for parts fetched from GitHub.</td></tr>
+  </table>
+
+  <h2>Limits Worth Knowing</h2>
+  <ul>
+    <li>GitHub asks that repositories stay under 5 GB. Deleting a file removes it from the <code>cdn</code> branch, but it stays in the branch history and still counts. Cloning the repository normally also fetches this branch: use <code>git clone --single-branch</code> for the code only.</li>
+    <li>Vercel's free plan includes 100 GB of downloads a month, and an edge response can stream for up to 300 seconds, which is why large files go in chunks. Files stored on your server still travel from it to the edge, so for the fastest chunked downloads keep large files on GitHub.</li>
+    <li>Small single files opened by a <code>?key=</code> link are cached on Vercel's network for a day, so repeat downloads do not touch your server at all.</li>
+  </ul>
+</main>
+<footer>FastFlare</footer>
+</body>
+</html>
