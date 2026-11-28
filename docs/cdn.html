@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CDN · FastFlare</title>
-<meta name="description" content="Share files privately. Every upload is encrypted with its own key, and only people with the key can download it.">
+<meta name="description" content="Encrypted file delivery for products, services and teams. Every upload is protected with its own key and delivered from the edge.">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="stylesheet" href="assets/style.css">
 <style>
@@ -42,14 +42,14 @@
   </nav>
 </header>
 <main>
-  <h1>Share Files <em>Privately</em></h1>
-  <p class="lead">Upload any file and get a private link. Every upload is encrypted with its own key, and only people who have that key can download it.</p>
+  <h1>Secure File Delivery, <em>at Any Scale</em></h1>
+  <p class="lead">Distribute software, media and assets to customers, employees or the public. Every upload is encrypted with its own key and delivered from the edge location nearest each user, whether you are a small team, a growing startup or an enterprise.</p>
 
   <div class="points">
-    <div><b>Encrypted</b><span>Files are locked with AES-256 as they are stored. Storage only ever holds scrambled data.</span></div>
-    <div><b>Only you hold the key</b><span>The key is created for your upload and shown to you once. It is never stored.</span></div>
-    <div><b>Fast worldwide</b><span>Downloads are delivered from the network location nearest each visitor.</span></div>
-    <div><b>No account</b><span>Upload straight from this page. A quick "I'm not a robot" check keeps it free of abuse.</span></div>
+    <div><b>Encrypted at Rest</b><span>Every file is protected with AES-256 and split into tamper-proof parts. Storage never holds readable data.</span></div>
+    <div><b>Key-Based Access</b><span>Each upload gets its own key, issued once and never stored. Only holders of the key can download.</span></div>
+    <div><b>Global Edge Delivery</b><span>Downloads are served from the location nearest each user, with parallel transfers for very large files.</span></div>
+    <div><b>Ready to Integrate</b><span>Use direct links in websites and apps, or the API from your own services. No accounts to manage.</span></div>
   </div>
 
   <h2>Upload</h2>
@@ -101,11 +101,11 @@
   <h2>Questions</h2>
   <h3>I lost my key. Can it be reset?</h3>
   <p>No. The key is never stored, so nobody can recover it. That is what keeps your files private. Use <strong>Save Key File</strong> or a password manager.</p>
-  <h3>Who can see my files?</h3>
-  <p>Only people you give the link or key to. Storage holds encrypted parts with random names, and the service itself cannot decrypt them without your key.</p>
+  <h3>Who can access uploaded files?</h3>
+  <p>Only people and systems you give the link or key to. Storage holds encrypted parts with random names, and the service itself cannot decrypt them without your key.</p>
   <h3>What are the limits?</h3>
   <p>Up to 1 GB per file, and up to 50 files or 2 GB per network each day. Very large files download best in Chrome or Edge, which save them straight to disk.</p>
-  <h3>Can I use links on my website?</h3>
+  <h3>Can files be served directly from a website or app?</h3>
   <p>Yes. A link to a single image, video, audio file or PDF opens directly in the browser, so it works in <code>&lt;img&gt;</code> and <code>&lt;video&gt;</code> tags. Add <code>&amp;download=1</code> to make it download instead.</p>
 
   <h2>For Developers</h2>
@@ -212,7 +212,7 @@
         .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(errText(j.error)); return j; }); })
         .then(function (j) {
           showKey(j);
-          $('u-msg').textContent = 'Done. Your files are encrypted and ready to share.';
+          $('u-msg').textContent = 'Upload complete. Your files are encrypted and ready to deliver.';
           $('d-bundle').value = j.bundle; $('d-key').value = j.key; openBundle();
           ctx = null;
           $('u-go').disabled = !queue.some(function (q) { return !q.done; });
