@@ -3,3 +3,4 @@ node_modules/
 config/sites.json
 *.log
 data/
+_site/
