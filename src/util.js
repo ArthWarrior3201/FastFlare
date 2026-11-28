@@ -1,7 +1,7 @@
 export const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range, X-FF-Key, X-FF-Bundle, X-FF-Tier, X-FF-Name',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range, X-FF-Key, X-FF-Bundle, X-FF-Tier, X-FF-Name, X-FF-Ticket, X-FF-Captcha',
   'Access-Control-Max-Age': '86400',
   'Access-Control-Expose-Headers': 'Server-Timing, X-FastFlare-Time, Content-Range, Content-Disposition, Content-Length, Accept-Ranges',
   'Timing-Allow-Origin': '*',

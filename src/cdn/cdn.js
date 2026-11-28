@@ -15,7 +15,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Readable, pipeline } from 'node:stream';
-import { httpError, send, CORS } from '../util.js';
+import { httpError, send, CORS, clientIp, coarseIp } from '../util.js';
 import * as F from './format.js';
 import { localStore, supabaseStore, githubStore, partCache } from './stores.js';
 import { pickRoute, rangeSpan, chunkedPageUrl } from './route.js';
@@ -44,7 +44,7 @@ export function cleanName(input) {
   return parts.join('/');
 }
 
-export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
+export function createCdn({ config, log = () => {}, fetchImpl = fetch, verifyHuman = () => false }) {
   const c = config.cdn;
   const root = c.dir;
   const dirs = { bundles: path.join(root, 'bundles'), store: path.join(root, 'store'), cache: path.join(root, 'cache'), tmp: path.join(root, 'tmp') };
@@ -109,6 +109,40 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
     if (!authorized(req)) throw httpError(401, 'unauthorized');
   }
 
+  // ---- Upload tickets -----------------------------------------------------------------------------
+  // The first upload of a batch creates the bundle and its key, and returns a ticket. Later files in
+  // the batch send the ticket instead of the key; the key itself is handed over only at the end
+  // (POST /cdn/finish, or done=1 on the last upload). The ticket carries the key encrypted with a
+  // server-only secret, so nothing has to be kept in memory and a restart does not break a batch.
+  const ticketKey = Buffer.from(crypto.hkdfSync('sha256', config.secret, Buffer.from('ffcdn'), Buffer.from('upload-ticket'), 32));
+  const TICKET_TTL = 2 * 60 * 60 * 1000;
+  function makeTicket(bundle, keyRaw, owner) {
+    const iv = crypto.randomBytes(12);
+    const ci = crypto.createCipheriv('aes-256-gcm', ticketKey, iv);
+    const body = Buffer.concat([ci.update(JSON.stringify({ b: bundle, k: keyRaw.toString('base64url'), e: Date.now() + TICKET_TTL, o: owner ? 1 : 0 })), ci.final()]);
+    return 'fft_' + Buffer.concat([iv, body, ci.getAuthTag()]).toString('base64url');
+  }
+  function openTicket(text) {
+    try {
+      const raw = Buffer.from(String(text).replace(/^fft_/, ''), 'base64url');
+      const d = crypto.createDecipheriv('aes-256-gcm', ticketKey, raw.subarray(0, 12));
+      d.setAuthTag(raw.subarray(raw.length - 16));
+      const t = JSON.parse(Buffer.concat([d.update(raw.subarray(12, raw.length - 16)), d.final()]).toString('utf8'));
+      if (!(t.e > Date.now())) return null;
+      return { bundle: t.b, keyRaw: Buffer.from(t.k, 'base64url'), owner: t.o === 1 };
+    } catch {
+      return null;
+    }
+  }
+
+  // ---- Limits for public uploads (per network, per day) ----------------------------------------
+  const publicUse = new Map();
+  function quota(net) {
+    let u = publicUse.get(net);
+    if (!u || u.reset < Date.now()) publicUse.set(net, (u = { bytes: 0, files: 0, reset: Date.now() + 24 * 60 * 60 * 1000 }));
+    return u;
+  }
+
   function chooseTier(asked, size) {
     const fits = (t) => stores[t].ready && used[t] + F.encryptedSize(size) <= caps[t];
     if (asked && asked !== 'auto') {
@@ -127,17 +161,39 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
 
   // ---- Upload -----------------------------------------------------------------------------------
   async function upload(req, res, url) {
-    requireOwner(req);
     const q = url.searchParams;
+    // Who may upload: the owner (FF_CDN_TOKEN), anyone holding a ticket from an earlier file in the
+    // same batch, or, for public uploads, anyone who passes the FastFlare human check.
+    const ticketText = req.headers['x-ff-ticket'] || q.get('ticket');
+    const ticket = ticketText ? openTicket(ticketText) : null;
+    if (ticketText && !ticket) throw httpError(403, 'ticket_expired');
+    if (req.headers.authorization && !authorized(req)) throw httpError(401, 'unauthorized');
+    const owner = authorized(req) || !!(ticket && ticket.owner);
+    if (!owner && !ticket) {
+      if (!c.publicUpload) throw httpError(c.token ? 401 : 503, c.token ? 'unauthorized' : 'cdn_upload_disabled');
+      const human = req.headers['x-ff-captcha'] || q.get('captcha');
+      if (!human) throw httpError(403, 'human_check_required');
+      if (!verifyHuman(String(human))) throw httpError(403, 'human_check_failed');
+    }
+    const net = coarseIp(clientIp(req, config.trustProxy));
     const name = cleanName(q.get('name') || decodeURIComponent(String(req.headers['x-ff-name'] || '')));
     if (!name) throw httpError(400, 'name_required');
     const declared = Number(req.headers['content-length'] || q.get('size') || 0);
-    if (declared > c.maxBytes) throw httpError(413, 'too_large');
+    const limit = owner ? c.maxBytes : Math.min(c.maxBytes, c.publicFileMaxBytes);
+    if (declared > limit) throw httpError(413, 'too_large');
+    if (!owner) {
+      if ((q.get('tier') || req.headers['x-ff-tier'] || 'auto') !== 'auto') throw httpError(403, 'tier_owner_only');
+      const u = quota(net);
+      if (u.files >= c.publicDayFiles || u.bytes + declared > c.publicDayBytes) throw httpError(429, 'daily_limit');
+    }
 
-    let bundleId = q.get('bundle') || req.headers['x-ff-bundle'];
+    let bundleId = ticket ? ticket.bundle : q.get('bundle') || req.headers['x-ff-bundle'];
     let keyRaw;
-    let keyText = null;
-    if (bundleId) {
+    if (ticket) {
+      keyRaw = ticket.keyRaw;
+      const b = await loadBundle(bundleId);
+      if (b && !F.keyMatches(keyRaw, b.keyCheck)) throw httpError(403, 'invalid_key');
+    } else if (bundleId) {
       const b = await loadBundle(String(bundleId));
       if (!b) throw httpError(404, 'bundle_not_found');
       keyRaw = F.parseKey(String(req.headers['x-ff-key'] || q.get('key') || ''));
@@ -145,7 +201,6 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
     } else {
       const k = F.newKey();
       keyRaw = k.raw;
-      keyText = k.text;
       bundleId = crypto.randomBytes(12).toString('base64url');
     }
 
@@ -190,7 +245,7 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
           await write(seg);
           inPart++;
         },
-        { maxBytes: c.maxBytes },
+        { maxBytes: limit },
       );
       await closePart();
       file.size = r.size;
@@ -230,14 +285,21 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
       });
       for (const o of replaced) removeFile(bundleId, o).catch((e) => log(`cdn: cleanup failed: ${e.message}`));
 
+      if (!owner) {
+        const u = quota(net);
+        u.files++;
+        u.bytes += r.size;
+      }
       const base = c.edgeUrl || c.publicUrl || '';
-      log(`cdn: stored ${bundleId}/${name} (${r.size} bytes) on ${tier}`);
+      log(`cdn: stored ${bundleId}/${name} (${r.size} bytes) on ${tier}${owner ? '' : ' (public)'}`);
+      const done = q.get('done') === '1';
       send(
         res,
         201,
         {
           bundle: bundleId,
-          ...(keyText ? { key: keyText } : {}),
+          ticket: ticket ? String(ticketText) : makeTicket(bundleId, keyRaw, owner),
+          ...(done ? { key: 'ffk_' + keyRaw.toString('base64url') } : {}),
           file: { name, size: r.size, tier, parts: file.parts },
           url: `${base}/cdn/${bundleId}/${name.split('/').map(encodeURIComponent).join('/')}`,
           bundleUrl: `${base}/cdn/${bundleId}`,
@@ -436,6 +498,21 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
     send(res, 200, { ok: true, filesLeft: left }, CORS);
   }
 
+  // The end of a batch: trade the ticket for the decryption key.
+  async function finish(req, res, url) {
+    const t = openTicket(req.headers['x-ff-ticket'] || url.searchParams.get('ticket'));
+    if (!t) throw httpError(403, 'ticket_expired');
+    const b = await loadBundle(t.bundle);
+    if (!b || !F.keyMatches(t.keyRaw, b.keyCheck)) throw httpError(404, 'bundle_not_found');
+    const base = c.edgeUrl || c.publicUrl || '';
+    send(res, 200, {
+      bundle: b.id,
+      key: 'ffk_' + t.keyRaw.toString('base64url'),
+      files: b.files.map((f) => ({ name: f.name, size: f.size })),
+      bundleUrl: `${base}/cdn/${b.id}`,
+    }, CORS);
+  }
+
   // ---- Edge delivery (Vercel) -------------------------------------------------------------------
   // The edge function sends the visitor's key here. If it matches, it gets the file list and a
   // short-lived link to every encrypted part, then fetches and decrypts the parts itself, close to
@@ -524,6 +601,7 @@ export function createCdn({ config, log = () => {}, fetchImpl = fetch }) {
     });
     const [first] = segs;
     if (first === 'upload' && (req.method === 'PUT' || req.method === 'POST')) return upload(req, res, url);
+    if (first === 'finish' && req.method === 'POST') return finish(req, res, url);
     if (first === 'status' && req.method === 'GET') return status(req, res);
     if (first === 'bundles' && req.method === 'GET') return bundles(req, res);
     if (first === 'edge' && req.method === 'GET' && ID_RE.test(segs[1] || '')) return edgeMeta(req, res, segs[1]);

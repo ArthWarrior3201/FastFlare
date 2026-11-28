@@ -547,6 +547,9 @@ test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, 
     const r1 = await put('logo.png', logo);
     assert.equal(r1.status, 201);
     const a = await r1.json();
+    assert.equal(a.key, undefined, 'the key is not given until the batch is finished');
+    const fin = await (await fetch(`${env.base}/cdn/finish`, { method: 'POST', headers: { 'X-FF-Ticket': a.ticket } })).json();
+    a.key = fin.key;
     assert.match(a.key, /^ffk_/);
     assert.equal(a.file.tier, 'supabase', 'small files go to Supabase');
     const { bundle, key } = a;
@@ -555,7 +558,7 @@ test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, 
     assert.equal((await put('app/setup.bin', mid, { bundle, key: 'ffk_' + 'A'.repeat(43) })).status, 403, 'adding needs the bundle key');
     const b = await (await put('app/setup.bin', mid, { bundle, key })).json();
     assert.equal(b.file.tier, 'github', 'medium and large files go to GitHub');
-    assert.equal(b.key, undefined, 'the key is only shown when the bundle is created');
+    assert.equal(b.key, undefined, 'the key is only shown at the end');
 
     const big = crypto.randomBytes(50 * 1024 * 1024 + 9);
     const c = await (await put('main.iso', big, { bundle, key, tier: 'vm' })).json();
@@ -595,7 +598,7 @@ test('CDN: upload to every tier, download with the key, ranges, zip, wrong key, 
     await (await get(`/cdn/${bundle}/logo.png?key=${key}`)).arrayBuffer();
     assert.equal(env.cloud.calls.supaGet, gets, 'repeat downloads come from the VM cache');
 
-    const d = await (await put('fresh.txt', 'tamper me')).json();
+    const d = await (await fetch(`${env.base}/cdn/upload?name=fresh.txt&done=1`, { method: 'PUT', headers: { Authorization: 'Bearer owner-token' }, body: 'tamper me' })).json();
     env.cloud.tamperSupabase(d.bundle + '/');
     assert.equal((await get(`/cdn/${d.bundle}/fresh.txt?key=${d.key}`)).status, 502, 'altered storage is detected');
 
@@ -624,7 +627,7 @@ test('CDN edge function: decrypts at the edge from direct links, ranges, zip, wr
     const logo = crypto.randomBytes(40_000);
     const mid = crypto.randomBytes(7 * 1024 * 1024 + 5);
     const big = crypto.randomBytes(46 * 1024 * 1024);
-    const a = await put('logo.png', logo);
+    const a = await put('logo.png', logo, '&done=1');
     await put('dl/setup.bin', mid, `&bundle=${a.bundle}`, { 'X-FF-Key': a.key });
     await put('main.iso', big, `&bundle=${a.bundle}&tier=vm`, { 'X-FF-Key': a.key });
     const call = (p, headers = {}) => edge(new Request('https://edge.example' + p, { headers }));
@@ -661,7 +664,7 @@ test('CDN edge function: decrypts at the edge from direct links, ranges, zip, wr
     assert.equal(r.status, 307, 'normal-size files are sent to the server');
     assert.equal(r.headers.get('location'), `${env.base}/cdn/${a.bundle}/main.iso?key=${a.key}&route=native`);
 
-    const t = await put('t.txt', 'tamper');
+    const t = await put('t.txt', 'tamper', '&done=1');
     env.cloud.tamperSupabase(t.bundle + '/');
     assert.equal((await call(`/cdn/${t.bundle}/t.txt?key=${t.key}`)).status, 502, 'altered parts are refused at the edge');
     assert.equal((await fetch(`${env.base}/cdn/part/${a.bundle}/x/0?exp=${Date.now() + 1e5}&sig=bad`)).status, 403, 'part links must be signed');
@@ -681,7 +684,7 @@ test('CDN smart routing: small to the edge, normal from the server, extra-large 
       const logo = crypto.randomBytes(40_000);
       const mid = crypto.randomBytes(3 * 1024 * 1024);
       const big = crypto.randomBytes(7 * 1024 * 1024);
-      const a = await put('logo.png', logo);
+      const a = await put('logo.png', logo, '&done=1');
       await put('mid.bin', mid, `&bundle=${a.bundle}`, { 'X-FF-Key': a.key });
       await put('big.bin', big, `&bundle=${a.bundle}`, { 'X-FF-Key': a.key });
       const HTML = { Accept: 'text/html,application/xhtml+xml' };
@@ -741,4 +744,43 @@ test('CDN smart routing: small to the edge, normal from the server, extra-large 
 
 test('the chunked downloader page is identical on the server and on Vercel', () => {
   assert.equal(fs.readFileSync(path.join(root, 'docs/get.html'), 'utf8'), fs.readFileSync(path.join(root, 'vercel/get.html'), 'utf8'));
+});
+
+test('CDN public uploads: human check instead of a token, key only at the end, limits per network', { timeout: 60000 }, async () => {
+  await withCdn(async (env) => {
+    const human = async () => {
+      const core = loadWidgetCore();
+      const { challenge } = await (await j(env.base, '/captcha/challenge', { sitekey: 'ff_site_cdn' })).json();
+      const nonce = String(core.solve(`${challenge.id}.${challenge.salt}.`, challenge.difficulty, 0, 1e9));
+      const out = await (await j(env.base, '/captcha/verify', { sitekey: 'ff_site_cdn', challenge, nonce, signals: HUMAN, trace: humanTrace(), hp: '' })).json();
+      assert.ok(out.token, JSON.stringify(out));
+      return out.token;
+    };
+    const up = (name, body, h = {}, q = '') => fetch(`${env.base}/cdn/upload?name=${name}${q}`, { method: 'PUT', headers: h, body });
+
+    let r = await up('a.txt', 'x');
+    assert.equal(r.status, 403);
+    assert.equal((await r.json()).error, 'human_check_required', 'no token and no human check: refused');
+
+    const tok = await human();
+    r = await up('a.txt', 'first file', { 'X-FF-Captcha': tok });
+    assert.equal(r.status, 201);
+    const first = await r.json();
+    assert.equal(first.key, undefined);
+    assert.match(first.ticket, /^fft_/);
+    assert.equal((await up('b.txt', 'x', { 'X-FF-Captcha': tok })).status, 403, 'a human check works once');
+    assert.equal((await up('b.txt', 'second file', { 'X-FF-Ticket': first.ticket })).status, 201, 'the rest of the batch uses the ticket');
+    assert.equal((await up('c.txt', 'x', { 'X-FF-Ticket': first.ticket }, '&tier=vm')).status, 403, 'choosing a store is for the owner');
+    assert.equal((await up('c.txt', 'x', { 'X-FF-Ticket': 'fft_' + 'A'.repeat(80) })).status, 403, 'forged tickets are refused');
+    assert.equal((await up('big.bin', crypto.randomBytes(3000), { 'X-FF-Ticket': first.ticket })).status, 413, 'public file size limit');
+
+    const fin = await (await fetch(`${env.base}/cdn/finish`, { method: 'POST', headers: { 'X-FF-Ticket': first.ticket } })).json();
+    assert.match(fin.key, /^ffk_/);
+    assert.deepEqual(fin.files.map((f) => f.name).sort(), ['a.txt', 'b.txt']);
+    const got = await fetch(`${env.base}/cdn/${fin.bundle}/b.txt?key=${fin.key}`);
+    assert.equal(await got.text(), 'second file');
+
+    assert.equal((await up('d.txt', 'x', { 'X-FF-Ticket': first.ticket })).status, 429, 'daily file limit per network');
+    assert.equal((await up('d.txt', 'owner is not limited', { Authorization: 'Bearer owner-token' })).status, 201);
+  }, { publicFileMaxBytes: 2000, publicDayFiles: 2 });
 });

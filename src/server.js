@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -25,6 +26,9 @@ export async function createApp(overrides = {}) {
   const config = loadConfig(overrides);
   const log = overrides.quiet ? () => {} : (...a) => console.log('[fastflare]', ...a);
 
+  // Built-in site key for the CDN upload page's "I'm not a robot" check (public uploads).
+  const cdnSite = { key: 'ff_site_cdn', secret: crypto.randomBytes(24).toString('hex') };
+  config.sites[cdnSite.key] = { secret: cdnSite.secret, origins: [] };
   const captcha = createCaptcha({
     secret: config.secret,
     sites: config.sites,
@@ -43,7 +47,7 @@ export async function createApp(overrides = {}) {
   });
   config.cdn.dir = config.cdn.dir || path.join(config.dataDir, 'cdn');
   config.cdn.publicUrl = config.publicUrl;
-  const cdn = createCdn({ config, log, fetchImpl: overrides.fetchImpl });
+  const cdn = createCdn({ config, log, fetchImpl: overrides.fetchImpl, verifyHuman: (token) => captcha.siteverify({ secret: cdnSite.secret, token }).success === true });
   const envtime = new EnvTime({ ...config.envtime, query: overrides.timeQuery, log });
 
   function serveStatic(req, res, pathname) {

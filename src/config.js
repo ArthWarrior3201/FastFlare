@@ -71,6 +71,10 @@ export function loadConfig(overrides = {}) {
     signupsPerIpPerDay: int(env.FF_SIGNUPS_PER_DAY, 5),
     cdn: {
       token: env.FF_CDN_TOKEN || '',
+      publicUpload: env.FF_CDN_PUBLIC_UPLOAD !== '0',
+      publicFileMaxBytes: int(env.FF_CDN_PUBLIC_FILE_MB, 1024) * 1048576,
+      publicDayBytes: int(env.FF_CDN_PUBLIC_DAY_MB, 2048) * 1048576,
+      publicDayFiles: int(env.FF_CDN_PUBLIC_DAY_FILES, 50),
       edgeUrl: (env.FF_CDN_EDGE_URL || '').replace(/\/$/, ''),
       routeSmallBytes: int(env.FF_ROUTE_SMALL_MB, 25) * 1048576,
       routeXlBytes: int(env.FF_ROUTE_XL_MB, 500) * 1048576,
