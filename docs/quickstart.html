@@ -151,7 +151,7 @@ echo json_encode(['success' =&gt; true, 'redirect' =&gt; '/dashboard']);</code><
   <h2>What Visitors See</h2>
   <table>
     <tr><th>FastFlare's decision</th><th>Widget</th><th>Result</th></tr>
-    <tr><td>Let through</td><td>Verified, then "Taking you through…"</td><td>Sent to <code>redirect_to_if_pass</code> with a pass</td></tr>
+    <tr><td>Let through</td><td>Verified, then "Redirecting…"</td><td>Sent to <code>redirect_to_if_pass</code> with a pass</td></tr>
     <tr><td>Challenge</td><td>A quick shape puzzle</td><td>Solved: let through. Wrong three times: blocked</td></tr>
     <tr><td>Block</td><td>"Could not verify, try again"</td><td>Stays on the check page</td></tr>
     <tr><td>Too many attempts</td><td>"Too many attempts from this network, try later"</td><td>Stays on the check page for up to 10 minutes</td></tr>

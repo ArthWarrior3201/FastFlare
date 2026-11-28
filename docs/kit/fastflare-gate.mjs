@@ -153,7 +153,7 @@ export function createGate(options = {}) {
     const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
     return page(
       o.title,
-      `<p class="lead">Confirm you are human to continue.</p>
+      `<p class="lead">Complete the check to continue.</p>
   <div class="ff-captcha" data-sitekey="${esc(o.sitekey)}" data-api="${esc(o.api)}" data-verify="/fastflare/verify" data-redirect="${esc(redirectTo)}"></div>
   <noscript><p class="warn">Please turn on JavaScript to continue.</p></noscript>
   <script src="${esc(o.api)}/fastflare.js" async defer></script>`,
@@ -178,7 +178,7 @@ export function createGate(options = {}) {
           res.writeHead(302, { Location: '/', 'Cache-Control': 'no-store' });
           return res.end();
         }
-        return html(res, 200, page('You are through', '<p class="lead">FastFlare confirmed you are human. This page is only shown to visitors who passed the check.</p><p class="ok">&#10003; Verified</p>'));
+        return html(res, 200, page('Verified', '<p class="lead">Verification complete. This page is only shown to visitors who passed the check.</p><p class="ok">&#10003; Verified</p>'));
       }
       if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD')) return html(res, 200, gatePage(o.redirect));
       return json(res, 404, { error: 'not_found' });

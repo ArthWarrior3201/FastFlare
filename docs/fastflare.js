@@ -594,7 +594,7 @@
       busy = false;
       if (sig) { sig.stop(); sig = null; }
       input.value = r.token;
-      setState('ok', 'Verified', r.redirect ? 'Taking you through…' : r.method === 'puzzle' ? 'Thanks, you passed the check' : 'You are human');
+      setState('ok', 'Verified', r.redirect ? 'Redirecting…' : '');
       if (opts.callback) opts.callback(r.token);
       el.dispatchEvent(new CustomEvent('ff-verified', { detail: { token: r.token, redirect: r.redirect || null }, bubbles: true }));
       if (r.redirect) {
